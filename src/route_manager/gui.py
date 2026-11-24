@@ -27,6 +27,7 @@ from route_manager.help_gui import HelpPanel
 from route_manager.private_files import private_directory
 from route_manager.runtime import Session, Update, check_route
 from route_manager.security import program_files, protected_path
+from route_manager.tor_bundle import install_bundle, installed_tor
 
 BG = "#111820"
 PANEL = "#1a2530"
@@ -152,6 +153,8 @@ class App:
             saved = Settings()
             load_error = str(exc)
         self.events: SimpleQueue[Update] = SimpleQueue()
+        self.download_stop = threading.Event()
+        self.downloading = False
         self.session: Session | None = None
         self.pending: set[str] = set()
         self.tor_ready = False
@@ -164,7 +167,8 @@ class App:
         self.mode_help = tk.StringVar()
         self.winws = tk.StringVar(value=saved.winws)
         self.strategy = tk.StringVar(value=STRATEGIES.get(saved.strategy, STRATEGIES["split"]))
-        self.tor = tk.StringVar(value=saved.tor)
+        cached = installed_tor(data)
+        self.tor = tk.StringVar(value=saved.tor or (str(cached) if cached.is_file() else ""))
         self.transport = tk.StringVar(
             value=TRANSPORTS.get(saved.transport, TRANSPORTS["webtunnel"])
         )
@@ -181,6 +185,9 @@ class App:
         self.bridge_hint = tk.StringVar()
 
         root.title("FLURUX")
+        app_icon = entry.parent / "FLURUX.ico"
+        if app_icon.is_file():
+            root.iconbitmap(str(app_icon))  # type: ignore[no-untyped-call]  # Tk stubs
         root.geometry("900x620")
         root.minsize(800, 590)
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -483,12 +490,41 @@ class App:
             "Настройки сохранены. При активном подключении изменения вступят в силу после перезапуска маршрута.",
         )
 
+    def _get_tor(self) -> None:
+        if not messagebox.askokcancel(
+            "Первое подключение через Tor",
+            "Скачать Tor (23 МБ) с сайта Tor Project и подключиться? FLURUX проверит файл и сохранит его для следующих запусков.",
+            parent=self.root,
+        ):
+            return
+        self.downloading = True
+        self.download_stop.clear()
+        self.status["tor"].configure(text="Загрузка Tor…")
+        self._refresh_controls()
+
+        def download() -> None:
+            try:
+                exe = install_bundle(
+                    self.data,
+                    self.download_stop,
+                    lambda n: self.events.put(Update("tor", "progress", f"Загрузка Tor · {n}%")),
+                )
+                event = Update("tor", "downloaded", str(exe))
+            except (OSError, ValueError) as exc:
+                event = Update("tor", "download-error", str(exc))
+            self.events.put(event)
+
+        threading.Thread(target=download, daemon=True).start()
+
     def start(self) -> None:
         """Validate and launch the chosen session."""
-        if self.pending:
+        if self.pending or self.downloading:
             return
         try:
             settings = self._settings_snapshot()
+            if settings.mode != "zapret" and not settings.tor:
+                self._get_tor()
+                return
             cascade = settings.mode == "cascade"
             tor = prepare_tor(settings) if settings.mode != "zapret" else None
             bridge_domains = webtunnel_domains(tor) if cascade and tor else ()
@@ -511,6 +547,8 @@ class App:
 
     def stop(self) -> None:
         """Request the stop of both managed engines."""
+        if self.downloading:
+            self.download_stop.set()
         if self.session:
             self.session.stop.set()
             self.tor_ready = False
@@ -592,8 +630,12 @@ class App:
             messagebox.showerror("Microsoft Edge", str(exc), parent=self.root)
 
     def _refresh_controls(self) -> None:
-        active = bool(self.pending)
-        stopping = self.session is not None and self.session.stop.is_set()
+        active = bool(self.pending) or self.downloading
+        stopping = (
+            self.download_stop.is_set()
+            if self.downloading
+            else self.session is not None and self.session.stop.is_set()
+        )
         self.start_button.configure(state="disabled" if active else "normal")
         self.stop_button.configure(state="normal" if active and not stopping else "disabled")
         self.mode_box.configure(state="disabled" if active else "readonly")
@@ -611,7 +653,19 @@ class App:
                 event = self.events.get_nowait()
             except Empty:
                 break
-            if event.kind == "status":
+            if event.kind == "progress":
+                self.status["tor"].configure(text=event.message)
+            elif event.kind in ("downloaded", "download-error"):
+                self.downloading = False
+                self._refresh_controls()
+                self.status["tor"].configure(text="Остановлен")
+                if not self.closing and not self.download_stop.is_set():
+                    if event.kind == "downloaded":
+                        self.tor.set(event.message)
+                        self.start()
+                    else:
+                        messagebox.showerror("Загрузка Tor", event.message, parent=self.root)
+            elif event.kind == "status":
                 style = "CardReady.TLabel" if event.ready else "CardMuted.TLabel"
                 if event.message.startswith("Ошибка"):
                     style = "CardError.TLabel"
@@ -634,6 +688,7 @@ class App:
         if (
             self.closing
             and not self.pending
+            and not self.downloading
             and not (self.advanced.busy or self.advanced.mesh_busy)
         ):
             self.root.destroy()

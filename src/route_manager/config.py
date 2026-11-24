@@ -30,12 +30,12 @@ HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 class Settings:
     """User configuration stored beside the application."""
 
-    mode: str = "both"
+    mode: str = "tor"
     winws: str = ""
     strategy: str = "split"
     domains: str = ""
     tor: str = ""
-    transport: str = "webtunnel"
+    transport: str = "direct"
     webtunnel_bridges: str = ""
     obfs4_bridges: str = ""
     snowflake_bridges: str = ""
