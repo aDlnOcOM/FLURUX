@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from queue import SimpleQueue
+from time import monotonic
 
 from route_manager.config import (
     TorConfig,
@@ -195,25 +196,41 @@ def probe_args(url: str, port: int | None, *, tor_check: bool = False) -> list[s
     return [*args, "--", url]
 
 
-def check_route(url: str, port: int | None, *, tor_check: bool = False) -> str:
+def check_route(
+    url: str, port: int | None, *, tor_check: bool = False, stop: threading.Event | None = None
+) -> str:
     """Return a route test result without changing system proxy settings."""
-    output = subprocess.run(
+    with subprocess.Popen(
         probe_args(url, port, tor_check=tor_check),
-        capture_output=True,
-        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=43 if port is not None else 22,
         creationflags=subprocess.CREATE_NO_WINDOW,
-    )
-    if output.returncode:
-        detail = output.stderr.strip() or str(output.returncode)
-        raise OSError(detail)
+    ) as process:
+        deadline = monotonic() + (43 if port is not None else 22)
+        try:
+            while True:
+                if stop is not None and stop.is_set():
+                    raise InterruptedError("Проверка остановлена.")
+                if monotonic() >= deadline:
+                    raise TimeoutError("Истекло время проверки соединения.")
+                try:
+                    stdout, stderr = process.communicate(timeout=0.15)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+        if process.returncode:
+            raise OSError(stderr.strip() or str(process.returncode))
     if tor_check:
-        status = json.loads(output.stdout)
+        status = json.loads(stdout)
         if not isinstance(status, dict) or status.get("IsTor") is not True:
             raise ValueError("Tor Project не подтвердил выход через Tor.")
         return f"Tor подтверждён · IP {status.get('IP', 'не указан')}"
-    code, duration = output.stdout.strip().splitlines()
+    code, duration = stdout.strip().splitlines()
     return f"HTTP {code} · {float(duration):.2f} с"

@@ -160,6 +160,18 @@ def executable(value: str, name: str) -> Path:
     return exe
 
 
+def socks_port(value: str) -> int:
+    """Validate a Tor listener port before downloading or starting an engine."""
+    if (
+        not value.isascii()
+        or not value.isdecimal()
+        or len(value) > 5
+        or not 1024 <= int(value) <= 65535
+    ):
+        raise ValueError("Порт SOCKS5 должен быть целым числом от 1024 до 65535.")
+    return int(value)
+
+
 def prepare_tor(settings: Settings) -> TorConfig:
     """Validate Tor settings before a session starts."""
     exe = executable(settings.tor, "tor.exe")
@@ -167,11 +179,7 @@ def prepare_tor(settings: Settings) -> TorConfig:
     transport = settings.transport
     if transport not in TRANSPORTS:
         raise ValueError("Выберите транспорт Tor.")
-    if not settings.socks_port.isascii() or not settings.socks_port.isdecimal():
-        raise ValueError("Порт SOCKS5 должен быть целым числом от 1024 до 65535.")
-    port = int(settings.socks_port)
-    if not 1024 <= port <= 65535:
-        raise ValueError("Порт SOCKS5 должен быть целым числом от 1024 до 65535.")
+    port = socks_port(settings.socks_port)
     if transport == "direct":
         return TorConfig(exe, None, transport, (), port)
     bridge_sets = {

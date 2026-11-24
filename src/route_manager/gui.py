@@ -20,6 +20,7 @@ from route_manager.config import (
     prepare_tor,
     prepare_zapret,
     save_settings,
+    socks_port,
     validated_url,
     webtunnel_domains,
 )
@@ -124,6 +125,7 @@ def apply_style(root: tk.Tk) -> None:
         background=[("selected", PANEL), ("active", LINE)],
         foreground=[("selected", ACCENT), ("active", TEXT)],
         expand=[("selected", (0, 0, 0, 0))],
+        padding=[("selected", (16, 8))],
     )
 
 
@@ -160,6 +162,7 @@ class App:
         self.tor_ready = False
         self.tor_port: int | None = None
         self.check_running = False
+        self.check_stop = threading.Event()
         self.closing = False
         self.log_count = 0
         self.status: dict[str, ttk.Label] = {}
@@ -232,10 +235,10 @@ class App:
 
         root.bind("<F1>", context_help)
         ttk.Button(
-            self.advanced.page,
-            text="Справка по профилю · F1",
+            self.advanced.footer,
+            text="Справка · F1",
             command=lambda: self.help.show(self.advanced.current["kind"]),
-        ).pack(anchor="e")
+        ).grid(row=0, column=1, sticky="e", padx=(6, 0))
         self._mode_changed()
         self._transport_changed()
         self._refresh_controls()
@@ -352,6 +355,10 @@ class App:
             anchor="w", pady=(5, 0)
         )
 
+        self.settings_feedback = tk.StringVar()
+        ttk.Label(
+            zapret, textvariable=self.settings_feedback, style="CardMuted.TLabel", wraplength=260
+        ).pack(anchor="w")
         self._file_field(tor, "Файл tor.exe", self.tor, "tor.exe", TOR_LINK)
         self._caption(tor, "Транспорт")
         box = self._choice(tor, self.transport, TRANSPORTS)
@@ -481,10 +488,14 @@ class App:
     def save(self) -> None:
         """Save the editable fields, including independent bridge lists."""
         try:
-            save_settings(self.settings_path, self._settings_snapshot())
-        except OSError as exc:
+            settings = self._settings_snapshot()
+            if settings.mode != "zapret":
+                socks_port(settings.socks_port)
+            save_settings(self.settings_path, settings)
+        except (ValueError, OSError) as exc:
             messagebox.showerror("Настройки", str(exc), parent=self.root)
             return
+        self.settings_feedback.set(f"Сохранено в {datetime.now():%H:%M:%S}")
         self._log(
             "app",
             "Настройки сохранены. При активном подключении изменения вступят в силу после перезапуска маршрута.",
@@ -518,10 +529,12 @@ class App:
 
     def start(self) -> None:
         """Validate and launch the chosen session."""
-        if self.pending or self.downloading:
+        if self.closing or self.pending or self.downloading:
             return
         try:
             settings = self._settings_snapshot()
+            if settings.mode != "zapret":
+                socks_port(settings.socks_port)
             if settings.mode != "zapret" and not settings.tor:
                 self._get_tor()
                 return
@@ -549,14 +562,15 @@ class App:
         """Request the stop of both managed engines."""
         if self.downloading:
             self.download_stop.set()
+            self.status["tor"].configure(text="Отмена загрузки…")
         if self.session:
             self.session.stop.set()
             self.tor_ready = False
-            self._refresh_controls()
+        self._refresh_controls()
 
     def check(self, via_tor: bool, *, identity: bool = False) -> None:
         """Probe a URL or verify that the public endpoint sees a Tor exit."""
-        if self.check_running or (via_tor and not self.tor_ready):
+        if self.closing or self.check_running or (via_tor and not self.tor_ready):
             return
         try:
             url = TOR_CHECK if identity else validated_url(self.target.get())
@@ -571,7 +585,7 @@ class App:
 
         def run() -> None:
             try:
-                result = check_route(url, port, tor_check=identity)
+                result = check_route(url, port, tor_check=identity, stop=self.check_stop)
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 result = f"Ошибка · {exc}"
             self.events.put(Update("check", "check", f"{route} · {result}"[:450]))
@@ -636,7 +650,7 @@ class App:
             if self.downloading
             else self.session is not None and self.session.stop.is_set()
         )
-        self.start_button.configure(state="disabled" if active else "normal")
+        self.start_button.configure(state="disabled" if active or self.closing else "normal")
         self.stop_button.configure(state="normal" if active and not stopping else "disabled")
         self.mode_box.configure(state="disabled" if active else "readonly")
         for button in (self.copy_button, self.edge_button):
@@ -654,7 +668,8 @@ class App:
             except Empty:
                 break
             if event.kind == "progress":
-                self.status["tor"].configure(text=event.message)
+                if not self.download_stop.is_set():
+                    self.status["tor"].configure(text=event.message)
             elif event.kind in ("downloaded", "download-error"):
                 self.downloading = False
                 self._refresh_controls()
@@ -689,6 +704,7 @@ class App:
             self.closing
             and not self.pending
             and not self.downloading
+            and not self.check_running
             and not (self.advanced.busy or self.advanced.mesh_busy)
         ):
             self.root.destroy()
@@ -727,6 +743,7 @@ class App:
         if self.closing:
             return
         self.closing = True
+        self.check_stop.set()
         self.advanced.closing = True
         self.advanced.stop_event.set()
         self.stop()

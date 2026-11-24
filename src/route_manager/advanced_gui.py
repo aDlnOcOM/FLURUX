@@ -8,6 +8,7 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 from tkinter import filedialog, messagebox, ttk
 
+from route_manager.form_view import FormView
 from route_manager.private_files import clean_sessions, private_directory
 from route_manager.profiles import (
     CHAIN_TYPES,
@@ -18,6 +19,7 @@ from route_manager.profiles import (
     load_profiles,
     template,
     update_profile,
+    validate,
 )
 from route_manager.routes import (
     binary,
@@ -55,6 +57,7 @@ class AdvancedPanel:
             self.read_error = "Хранилище профилей недоступно. " + str(error)
         self.queue: SimpleQueue[tuple[str, object]] = SimpleQueue()
         self.mesh_busy = False
+        self.available_exits: set[str] = set()
         self.busy = False
         self.closing = False
         self.stop_event = threading.Event()
@@ -67,30 +70,47 @@ class AdvancedPanel:
         self.bindings: list[tuple[Obj, str, tk.StringVar | tk.BooleanVar]] = []
         self.page = ttk.Frame(tabs, padding=6)
         tabs.add(self.page, text="Каскады")
+        self.page.columnconfigure(0, weight=1)
+        self.page.rowconfigure(1, weight=1)
         form = ttk.Frame(self.page)
-        form.pack(fill="x")
+        form.grid(row=0, column=0, sticky="ew")
         self.kind = ttk.Combobox(
             form, values=[STRATEGIES[k][0] for k in self.modes], state="readonly", width=40
         )
         self.kind.current(0)
         self.kind.pack(side="left", fill="x", expand=True)
-        ttk.Button(form, text="Новый профиль", command=self.new).pack(side="left", padx=5)
+        self.kind.bind("<<ComboboxSelected>>", lambda _: self.new())
+        self.new_button = ttk.Button(form, text="Новый профиль", command=self.new)
+        self.new_button.pack(side="left", padx=5)
         self.pick = ttk.Combobox(form, state="readonly", width=24)
         self.pick.pack(side="left", fill="x", expand=True)
         self.pick.bind("<<ComboboxSelected>>", self.choose)
         self.editor = ttk.Notebook(self.page)
-        self.editor.pack(fill="both", expand=True, pady=6)
+        self.editor.grid(row=1, column=0, sticky="nsew", pady=6)
         bar = ttk.Frame(self.page)
-        bar.pack(fill="x")
+        bar.grid(row=2, column=0, sticky="ew")
+        self.action_buttons = []
         for title, fn in (
             ("Сохранить", self.save),
             ("Настроить узлы по SSH", self.install),
             ("Подключить", self.start),
-            ("Остановить", self.stop_event.set),
         ):
-            ttk.Button(bar, text=title, command=fn).pack(side="left", padx=2)
-        ttk.Button(bar, text="Снять блокировку сети", command=self.unlock).pack(side="left", padx=2)
-        ttk.Label(self.page, textvariable=self.status, wraplength=790).pack(fill="x", pady=3)
+            button = ttk.Button(bar, text=title, command=fn)
+            button.pack(side="left", padx=2)
+            self.action_buttons.append(button)
+        self.stop_button = ttk.Button(bar, text="Остановить", command=self.stop, state="disabled")
+        self.stop_button.pack(side="left", padx=2)
+        unlock = ttk.Button(bar, text="Снять блокировку сети", command=self.unlock)
+        unlock.pack(side="left", padx=2)
+        self.action_buttons.append(unlock)
+        self.footer = ttk.Frame(self.page)
+        self.footer.grid(row=3, column=0, sticky="ew")
+        self.footer.columnconfigure(0, weight=1)
+        self.status_label = ttk.Label(self.footer, textvariable=self.status, wraplength=570)
+        self.status_label.grid(row=0, column=0, sticky="w")
+        self.mesh_status = tk.StringVar(value="Нажмите «Обновить», чтобы загрузить список узлов.")
+        self.mesh_buttons: list[ttk.Button] = []
+        self.disabled_fields: list[ttk.Widget] = []
         mesh = ttk.Frame(tabs, padding=10)
         tabs.add(mesh, text="Mesh")
         ttk.Label(mesh, text="Узлы Tailscale").pack(anchor="w")
@@ -110,8 +130,12 @@ class AdvancedPanel:
             ("Выбрать выход", self.use_exit),
             ("Отключить выход", self.clear_exit),
         ):
-            ttk.Button(actions, text=title, command=fn).pack(side="left", padx=2)
-        ttk.Label(mesh, textvariable=self.status, wraplength=790).pack(anchor="w")
+            button = ttk.Button(actions, text=title, command=fn)
+            button.pack(side="left", padx=2)
+            self.mesh_buttons.append(button)
+        ttk.Label(mesh, textvariable=self.mesh_status, wraplength=790).pack(anchor="w")
+        self.peers.bind("<<TreeviewSelect>>", lambda _: self._mesh_controls())
+        self._mesh_controls()
         self.refresh_names()
         self.edit(copy.deepcopy(self.saved[0]) if self.saved else template(self.modes[0]))
         self.root.after(100, self.poll)
@@ -122,14 +146,31 @@ class AdvancedPanel:
 
     def new(self) -> None:
         """Open a fresh profile of the selected type."""
-        if not self.busy and not self.closing:
+        if not self.busy and not self.closing and self._can_leave():
             self.pick.set("")
             self.edit(template(self.modes[self.kind.current()]))
 
     def choose(self, event: object = None) -> None:
         """Load one saved profile into the editor."""
-        if not self.busy and not self.closing and self.pick.current() >= 0:
-            self.edit(copy.deepcopy(self.saved[self.pick.current()]))
+        index = self.pick.current()
+        if not self.busy and not self.closing and index >= 0 and self._can_leave():
+            self.edit(copy.deepcopy(self.saved[index]))
+
+    def _can_leave(self) -> bool:
+        for node, key, var in self.bindings:
+            node[key] = var.get()
+        if self.current == self.baseline or messagebox.askyesno(
+            "Несохранённый профиль",
+            "Открыть другой профиль и отбросить внесённые изменения?",
+            parent=self.root,
+        ):
+            return True
+        self.kind.current(self.modes.index(self.current["kind"]))
+        self.pick.set("")
+        for i, saved in enumerate(self.saved):
+            if saved["id"] == self.current["id"]:
+                self.pick.current(i)
+        return False
 
     def edit(self, p: Obj) -> None:
         """Build editable fields appropriate to each endpoint's role."""
@@ -140,8 +181,9 @@ class AdvancedPanel:
         self.bindings.clear()
         for child in self.editor.winfo_children():
             child.destroy()
-        main = ttk.Frame(self.editor, padding=8)
-        self.editor.add(main, text="Профиль")
+        first = FormView(self.editor, "Профиль")
+        main = first.body
+        pages = [first]
         self.field(main, 0, p, "name", "Название")
         if engine_name(p["kind"]) != "python":
             self.field(main, 1, p, "engine_path", engine_name(p["kind"]) + ".exe", file=True)
@@ -154,7 +196,7 @@ class AdvancedPanel:
                 main,
                 variable=sync,
                 text="Сверять публичные ключи своих узлов по SSH при подключении",
-            ).grid(row=6, column=1, sticky="w")
+            ).grid(row=6, column=0, columnspan=3, sticky="w")
         if p["kind"] in ("ech", "dns_tls", "dns_https"):
             self.field(main, 4, p, "access_cidr", "Разрешённая сеть CIDR для своего DNS")
         if p["kind"] in ("psiphon", "awg", "ssh", "ssh_single", "ech"):
@@ -175,14 +217,14 @@ class AdvancedPanel:
                 main,
                 variable=flag,
                 text="Системный TUN для приложений Windows (нужны права администратора)",
-            ).grid(row=3, column=1, sticky="w")
+            ).grid(row=3, column=0, columnspan=3, sticky="w")
             lock = tk.BooleanVar(value=p.get("network_lock", False))
             self.bindings.append((p, "network_lock", lock))
             ttk.Checkbutton(
                 main,
                 variable=lock,
                 text="Блокировать интернет вне TUN, в том числе после остановки",
-            ).grid(row=4, column=1, sticky="w")
+            ).grid(row=4, column=0, columnspan=3, sticky="w")
 
         if p["kind"] in {"relay_tcp", "relay_udp", "masque_udp"}:
             self.field(main, 4, p, "target_host", "Фиксированное назначение")
@@ -194,7 +236,7 @@ class AdvancedPanel:
                 main,
                 variable=plain,
                 text="Разрешить передачу пароля прокси без шифрования первого участка",
-            ).grid(row=9, column=1, sticky="w")
+            ).grid(row=9, column=0, columnspan=3, sticky="w")
         if p["kind"] in ("relay_tcp", "relay_udp"):
             self.field(main, 7, p, "access_cidr", "Разрешённая исходная сеть CIDR")
         hints = {
@@ -216,8 +258,9 @@ class AdvancedPanel:
             wraplength=650,
         ).grid(row=8, column=0, columnspan=3, sticky="w", pady=8)
         for idx, n in enumerate(p["nodes"]):
-            frame = ttk.Frame(self.editor, padding=8)
-            self.editor.add(frame, text=("Вход" if idx == 0 else "Выход") + " · " + n["type"])
+            page = FormView(self.editor, ("Вход" if idx == 0 else "Выход") + " · " + n["type"])
+            pages.append(page)
+            frame = page.body
             self.field(frame, 0, n, "host", "Адрес подключения")
             self.field(frame, 1, n, "port", "Порт протокола")
             self.field(frame, 2, n, "ssh", "SSH · user@host или псевдоним")
@@ -253,6 +296,24 @@ class AdvancedPanel:
                     text="Импорт сертификата PEM",
                     command=partial(self.certificate, n),
                 ).grid(row=8, column=1, sticky="w", pady=4)
+            for bound_node, key, var in self.bindings:
+                if bound_node is n and key == "type":
+
+                    def update_title(
+                        *_: str,
+                        tab: FormView = page,
+                        role: str = "Вход" if idx == 0 else "Выход",
+                        protocol: tk.StringVar | tk.BooleanVar = var,
+                    ) -> None:
+                        self.editor.tab(tab, text=f"{role} · {protocol.get()}")  # type: ignore[no-untyped-call]
+
+                    var.trace_add("write", update_title)
+        for page in pages:
+            page.enable_navigation()
+        for node, key, var in self.bindings:
+            node[key] = var.get()
+        self.baseline = copy.deepcopy(p)
+        self._editing_controls()
         for i, saved in enumerate(self.saved):
             if saved["id"] == p["id"]:
                 self.pick.current(i)
@@ -336,6 +397,7 @@ class AdvancedPanel:
             self.store(p)
             self.refresh_names()
             self.pick.current(len(self.saved) - 1)
+            self.baseline = copy.deepcopy(p)
             self.status.set("Профиль сохранён.")
         except (OSError, ValueError) as err:
             self.status.set(str(err))
@@ -344,21 +406,57 @@ class AdvancedPanel:
         """Post a status message from a worker."""
         self.queue.put(("status", message))
 
-    def task(self, fn: Callable[[], None], *, mesh: bool = False) -> None:
+    def _editing_controls(self) -> None:
+        widgets: list[ttk.Widget] = [self.kind, self.pick, self.new_button, *self.action_buttons]
+        if self.busy:
+            for page in self.editor.winfo_children():
+                if isinstance(page, FormView):
+                    widgets.extend(
+                        w
+                        for w in page.body.winfo_children()
+                        if isinstance(w, (ttk.Entry, ttk.Button, ttk.Checkbutton))
+                    )
+            for widget in widgets:
+                if not widget.instate(["disabled"]):
+                    widget.state(["disabled"])
+                    self.disabled_fields.append(widget)
+        else:
+            for widget in self.disabled_fields:
+                if widget.winfo_exists():
+                    widget.state(["!disabled"])
+            self.disabled_fields.clear()
+
+    def _mesh_controls(self) -> None:
+        selected = self.selected()
+        enabled = (True, bool(selected), selected in self.available_exits, True)
+        for button, available in zip(self.mesh_buttons, enabled, strict=True):
+            button.configure(state="normal" if available and not self.mesh_busy else "disabled")
+
+    def stop(self) -> None:
+        """Request cancellation of the active route and give immediate feedback."""
+        self.stop_event.set()
+        self.stop_button.state(["disabled"])
+        self.status.set("Остановка маршрута…")
+
+    def task(self, fn: Callable[[], None], *, mesh: bool = False, stoppable: bool = False) -> None:
         """Run one network operation outside the Tk thread."""
         if (self.mesh_busy if mesh else self.busy) or self.closing:
             return
         if mesh:
             self.mesh_busy = True
+            self._mesh_controls()
         else:
             self.busy = True
             self.stop_event.clear()
+            self._editing_controls()
+            if stoppable:
+                self.stop_button.state(["!disabled"])
 
         def work() -> None:
             try:
                 fn()
             except Exception as err:
-                self.notify(str(err))
+                self.queue.put(("mesh_status" if mesh else "status", str(err)))
             finally:
                 self.queue.put(("mesh_done" if mesh else "done", None))
 
@@ -418,6 +516,7 @@ class AdvancedPanel:
             return
         try:
             p = self.collect()
+            validate(p)
             self.store(p)
             self.refresh_names()
         except (OSError, ValueError) as err:
@@ -432,6 +531,9 @@ class AdvancedPanel:
                     raise ValueError("Этот режим доступен при запуске с обычными правами.")
             else:
                 synchronize(p)
+            if self.stop_event.is_set():
+                self.notify("Маршрут остановлен.")
+                return
             self.store(copy.deepcopy(p))
             self.queue.put(("edit", p))
             if p["kind"] == "mesh_exit":
@@ -446,12 +548,19 @@ class AdvancedPanel:
                 self.notify("Маршрут остановлен.")
 
         self.status.set("Подключение…")
-        self.task(work)
+        self.task(work, stoppable=not p["kind"].startswith("mesh_"))
 
     def mesh_exe(self) -> str:
         """Reuse a configured Mesh engine path if available."""
         if self.current["kind"].startswith("mesh_"):
-            return str(self.collect()["engine_path"])
+            return next(
+                (
+                    str(var.get())
+                    for node, key, var in self.bindings
+                    if node is self.current and key == "engine_path"
+                ),
+                "",
+            )
         return next(
             (
                 str(p["engine_path"])
@@ -480,7 +589,7 @@ class AdvancedPanel:
     def ping_mesh(self) -> None:
         """Probe the selected peer."""
         ip, exe = self.selected(), self.mesh_exe()
-        self.task(lambda: self.notify(self.mesh_ping(ip, exe)), mesh=True)
+        self.task(lambda: self.queue.put(("mesh_status", self.mesh_ping(ip, exe))), mesh=True)
 
     def use_exit(self) -> None:
         """Route the Windows host through the selected peer."""
@@ -499,7 +608,9 @@ class AdvancedPanel:
         def apply() -> None:
             mesh_select(ip, exe)
             self.queue.put(("peers", mesh_peers(exe)))
-            self.notify("Выход Tailscale выбран." if ip else "Выход Tailscale отключён.")
+            self.queue.put(
+                ("mesh_status", "Выход Tailscale выбран." if ip else "Выход Tailscale отключён.")
+            )
 
         self.task(apply, mesh=True)
 
@@ -512,14 +623,21 @@ class AdvancedPanel:
                 break
             if kind == "mesh_done":
                 self.mesh_busy = False
+                self._mesh_controls()
             elif kind == "done":
                 self.busy = False
+                self.stop_button.state(["disabled"])
+                self._editing_controls()
+            elif kind == "mesh_status":
+                self.mesh_status.set(str(value))
             elif kind == "status":
                 self.status.set(str(value))
             elif kind == "edit" and isinstance(value, dict):
                 self.refresh_names()
                 self.edit(value)
             elif kind == "peers" and isinstance(value, list):
+                selected = self.selected()
+                self.available_exits = {n["ip"] for n in value if n["online"] and n["exit"]}
                 self.peers.delete(*self.peers.get_children())
                 for n in value:
                     self.peers.insert(
@@ -533,5 +651,8 @@ class AdvancedPanel:
                             "Выбран" if n["selected"] else "Доступен" if n["exit"] else "—",
                         ),
                     )
-                self.status.set(f"Узлов в tailnet: {len(value)}")
+                if selected and self.peers.exists(selected):
+                    self.peers.selection_set(selected)
+                self.mesh_status.set(f"Узлов в tailnet: {len(value)}")
+                self._mesh_controls()
         self.root.after(100, self.poll)

@@ -51,7 +51,7 @@ def install_bundle(data: Path, stop: threading.Event, progress: Callable[[int], 
                     total = 0
                     checksum = hashlib.sha256()
                     percent = -1
-                    while chunk := response.read(256 * 1024):
+                    while chunk := response.read1(256 * 1024):
                         if stop.is_set():
                             raise InterruptedError("Загрузка отменена.")
                         total += len(chunk)
