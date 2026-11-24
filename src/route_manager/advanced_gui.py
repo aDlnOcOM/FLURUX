@@ -111,8 +111,11 @@ class AdvancedPanel:
         self.mesh_status = tk.StringVar(value="Нажмите «Обновить», чтобы загрузить список узлов.")
         self.mesh_buttons: list[ttk.Button] = []
         self.disabled_fields: list[ttk.Widget] = []
-        mesh = ttk.Frame(tabs, padding=10)
-        tabs.add(mesh, text="Mesh")
+        self.mesh_page = ttk.Frame(tabs, padding=10)
+        tabs.add(self.mesh_page, text="Mesh")
+        mesh = ttk.Frame(self.mesh_page)
+        if not admin:
+            mesh.pack(fill="both", expand=True)
         ttk.Label(mesh, text="Узлы Tailscale").pack(anchor="w")
         self.peers = ttk.Treeview(
             mesh, columns=("ip", "state", "exit"), show="tree headings", height=8
@@ -440,7 +443,7 @@ class AdvancedPanel:
 
     def task(self, fn: Callable[[], None], *, mesh: bool = False, stoppable: bool = False) -> None:
         """Run one network operation outside the Tk thread."""
-        if (self.mesh_busy if mesh else self.busy) or self.closing:
+        if (mesh and self.admin) or (self.mesh_busy if mesh else self.busy) or self.closing:
             return
         if mesh:
             self.mesh_busy = True

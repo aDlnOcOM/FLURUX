@@ -51,6 +51,75 @@ class DesktopTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertTrue(done(), self.errors)
 
+    def click_top_tab(self, title: str) -> None:
+        """Use Tk's pointer bindings and hit testing, including after editing a nested tab."""
+        tabs = self.app.help.tabs
+        index = next(i for i, page in enumerate(tabs.tabs()) if tabs.tab(page, "text") == title)
+        for x in range(2, tabs.winfo_width(), 3):
+            try:
+                if tabs.index(f"@{x},12") != index:
+                    continue
+            except tk.TclError:
+                continue
+            tabs.event_generate("<ButtonPress-1>", x=x, y=12)
+            tabs.event_generate("<ButtonRelease-1>", x=x, y=12)
+            self.root.update()
+            self.assertEqual(tabs.tab(tabs.select(), "text"), title)
+            return
+        self.fail("Заголовок вкладки недоступен: " + title)
+
+    def test_switch_away_from_cascades_using_pointer(self) -> None:
+        for scale in (1.333, 1.667, 2.0):
+            self.root.tk.call("tk", "scaling", scale)
+            self.root.update()
+            for title in ("Подключение", "Настройки", "Mesh", "Журнал", "Справка"):
+                self.click_top_tab("Каскады")
+                self.app.advanced.editor.select(1)
+                self.root.update()
+                self.click_top_tab(title)
+
+        tabs = self.app.help.tabs
+        self.click_top_tab("Каскады")
+        tabs.focus_force()
+        self.root.update()
+        tabs.event_generate("<Control-Tab>")
+        self.root.update()
+        self.assertEqual(tabs.tab(tabs.select(), "text"), "Mesh")
+
+    def test_admin_can_switch_tabs_while_vpn_panel_stays_available(self) -> None:
+        self.cleanup_window()
+        self.root = tk.Tk()
+        (self.temp / "Program Files" / "FLURUX").mkdir(parents=True)
+        from route_manager.private_files import private_directory
+
+        def user_directory(path: Path, *, admin: bool = False) -> Path:
+            return private_directory(path)
+
+        with (
+            patch("route_manager.gui.program_files", return_value=self.temp / "Program Files"),
+            patch("route_manager.gui.protected_path"),
+            patch("route_manager.gui.private_directory", side_effect=user_directory),
+            patch("route_manager.advanced_gui.private_directory", side_effect=user_directory),
+        ):
+            self.app = App(self.root, self.temp / "legacy", PROJECT / "run.pyw", admin=True)
+        self.root.update()
+        for title in ("Подключение", "Настройки", "Mesh", "Журнал", "Справка"):
+            self.click_top_tab("Каскады")
+            self.click_top_tab(title)
+        self.click_top_tab("Mesh")
+        page = self.app.user_tabs["mesh"]
+        button = next(
+            w for w in page.winfo_children() if isinstance(w, ttk.Button) and w.winfo_ismapped()
+        )
+        self.assertFalse(self.app.advanced.peers.winfo_ismapped())
+        with (
+            patch.object(Path, "is_file", return_value=True),
+            patch("route_manager.gui.subprocess.Popen") as start,
+        ):
+            button.invoke()
+            exe = self.app.entry.parent / "FLURUX.exe"
+            start.assert_called_once_with([str(exe), "/ordinary", "mesh"], cwd=exe.parent)
+
     def test_profile_tabs_fit_and_fields_are_reachable(self) -> None:
         panel = self.app.advanced
         tabs = self.app.help.tabs

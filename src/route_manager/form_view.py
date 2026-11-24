@@ -26,12 +26,17 @@ class FormView(ttk.Frame):
         self.canvas.configure(yscrollcommand=self.scroll.set)
         self.body = ttk.Frame(self.canvas, padding=8)
         self.item = self.canvas.create_window(0, 0, window=self.body, anchor="nw")
+        self.viewport = (-1, -1, -1)
         self.canvas.bind("<Configure>", self._resize)
         self.body.bind("<Configure>", self._resize)
 
     def _resize(self, event: "tk.Event[tk.Misc]") -> None:
         width = self.canvas.winfo_width()
         height = self.body.winfo_reqheight()
+        viewport = (width, self.canvas.winfo_height(), height)
+        if self.viewport == viewport:
+            return
+        self.viewport = viewport
         self.canvas.itemconfigure(self.item, width=width)
         self.canvas.configure(scrollregion=(0, 0, width, height))
         if height > self.canvas.winfo_height():

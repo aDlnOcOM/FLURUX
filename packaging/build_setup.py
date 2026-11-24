@@ -16,7 +16,7 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 RUNTIME_SHA256 = "93584a7bee14bf6b91a03efdbb128419147279a64934fbc95934c9f53e1191e5"
 SOURCE = ROOT / "packaging"
 
@@ -135,7 +135,14 @@ def runtime_files(temp: Path, archive: Path) -> dict[Path, Path]:
     return files
 
 
-def compile_gui(source: Path, target: Path, ico: Path, package: Path | None = None) -> None:
+def compile_gui(
+    source: Path,
+    target: Path,
+    ico: Path,
+    package: Path | None = None,
+    *,
+    max_folder: int | None = None,
+) -> None:
     """Compile a statically linked native Windows GUI binary with release resources."""
 
     def rc_path(p: Path) -> str:
@@ -147,7 +154,8 @@ def compile_gui(source: Path, target: Path, ico: Path, package: Path | None = No
         + rc_path(ico)
         + '"\n'
         + ('201 RCDATA "' + rc_path(package) + '"\n' if package else "")
-        + '1 VERSIONINFO\n FILEVERSION 0,3,2,0\n PRODUCTVERSION 0,3,2,0\n FILEOS VOS_NT_WINDOWS32\n FILETYPE VFT_APP\n BEGIN\n BLOCK "StringFileInfo" BEGIN BLOCK "040904B0" BEGIN\n'
+        + ('#include "' + rc_path(SOURCE / "setup_dialog.rc") + '"\n' if package else "")
+        + '1 VERSIONINFO\n FILEVERSION 0,3,3,0\n PRODUCTVERSION 0,3,3,0\n FILEOS VOS_NT_WINDOWS32\n FILETYPE VFT_APP\n BEGIN\n BLOCK "StringFileInfo" BEGIN BLOCK "040904B0" BEGIN\n'
         + f'VALUE "FileDescription", "FLURUX {"Setup" if package else "Desktop"}\\0"\nVALUE "ProductName", "FLURUX\\0"\nVALUE "FileVersion", "{VERSION}\\0"\nVALUE "ProductVersion", "{VERSION}\\0"\n'
         + 'END END\nBLOCK "VarFileInfo" BEGIN VALUE "Translation", 0x0409, 1200 END\nEND\n',
         encoding="utf-8",
@@ -167,6 +175,7 @@ def compile_gui(source: Path, target: Path, ico: Path, package: Path | None = No
             "/guard:cf",
             "/DUNICODE",
             "/D_UNICODE",
+            *([f"/DFLURUX_MAX_FOLDER={max_folder}"] if max_folder is not None else []),
             str(source),
             str(res),
             "/Fo" + str(target.with_suffix(".obj")),
@@ -182,6 +191,7 @@ def compile_gui(source: Path, target: Path, ico: Path, package: Path | None = No
             "shell32.lib",
             "msi.lib",
             "ole32.lib",
+            "oleaut32.lib",
             "advapi32.lib",
             "uuid.lib",
         ],
@@ -207,9 +217,45 @@ def build_setup(guard: Path, runtime: Path, output: Path) -> None:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         msi = temp / "FLURUX-Desktop-x64.msi"
-        module.build(guard.resolve(), msi, desktop=files)
+        paths = [*files, *(p.relative_to(ROOT) for p in (ROOT / "src").rglob("*.py"))]
+        # Win32 MAX_PATH includes the separator, longest relative filename, and terminator.
+        max_folder = 258 - max(len(str(p).encode("utf-16le")) // 2 for p in paths)
+        validator = temp / "folder_check.dll"
+        subprocess.run(
+            [
+                "cl.exe",
+                "/nologo",
+                "/utf-8",
+                "/std:c++17",
+                "/O2",
+                "/W4",
+                "/MT",
+                "/EHsc",
+                "/LD",
+                "/guard:cf",
+                "/DUNICODE",
+                "/D_UNICODE",
+                f"/DFLURUX_MAX_FOLDER={max_folder}",
+                str(SOURCE / "folder_check.cpp"),
+                "/Fo" + str(temp / "folder_check.obj"),
+                "/Fe" + str(validator),
+                "/link",
+                "/Brepro",
+                "/DEPENDENTLOADFLAG:0x800",
+                "/DYNAMICBASE",
+                "/HIGHENTROPYVA",
+                "/NXCOMPAT",
+                "msi.lib",
+                "shell32.lib",
+                "ole32.lib",
+                "uuid.lib",
+            ],
+            cwd=temp,
+            check=True,
+        )
+        module.build(guard.resolve(), msi, desktop=files, validator=validator)
         installer = temp / "FLURUX-Setup.exe"
-        compile_gui(SOURCE / "setup.cpp", installer, ico, msi)
+        compile_gui(SOURCE / "setup.cpp", installer, ico, msi, max_folder=max_folder)
         # Copy out of the private build directory so a shared release inherits its destination ACL.
         staged = output.with_name("." + uuid.uuid4().hex + ".tmp")
         try:

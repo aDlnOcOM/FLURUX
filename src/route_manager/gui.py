@@ -5,6 +5,7 @@ import tkinter as tk
 import webbrowser
 from collections.abc import Mapping
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from queue import Empty, SimpleQueue
 from tkinter import filedialog, messagebox, ttk
@@ -134,6 +135,7 @@ class App:
 
     def __init__(self, root: tk.Tk, data: Path, entry: Path, *, admin: bool = False) -> None:
         self.root = root
+        self.admin = admin
         legacy_settings = data / "settings.json"
         if admin:
             app_dir = program_files() / "FLURUX"
@@ -187,7 +189,10 @@ class App:
         self.shown_transport = select_key(TRANSPORTS, self.transport.get())
         self.bridge_hint = tk.StringVar()
 
-        root.title("FLURUX")
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("FLURUX.Desktop")
+        root.title("FLURUX · Системный VPN" if admin else "FLURUX")
         app_icon = entry.parent / "FLURUX.ico"
         if app_icon.is_file():
             root.iconbitmap(str(app_icon))  # type: ignore[no-untyped-call]  # Tk stubs
@@ -209,14 +214,33 @@ class App:
         tabs.add(connection, text="Подключение")
         tabs.add(settings, text="Настройки")
         tabs.add(journal, text="Журнал")
-        self._connection(connection)
-        self._settings(settings, saved.domains)
+        connection_controls = ttk.Frame(connection)
+        settings_controls = ttk.Frame(settings)
+        self._connection(connection_controls)
+        self._settings(settings_controls, saved.domains)
+        if not admin:
+            connection_controls.pack(fill="both", expand=True)
+            settings_controls.pack(fill="both", expand=True)
         self._journal(journal)
         self.advanced = AdvancedPanel(tabs, data, admin=admin)
+        self.user_tabs = {
+            "connection": connection,
+            "settings": settings,
+            "mesh": self.advanced.mesh_page,
+        }
+        tabs.enable_traversal()
         if admin:
-            for tab in tabs.tabs():  # type: ignore[no-untyped-call]  # Tk stubs
-                if str(tab) != str(self.advanced.page):
-                    tabs.tab(tab, state="disabled")  # type: ignore[no-untyped-call]
+            for name, page in self.user_tabs.items():
+                ttk.Label(
+                    page,
+                    text="Этот раздел открывается в обычном окне FLURUX. Системный VPN продолжит работу в этом окне.",
+                    wraplength=530,
+                ).pack(anchor="w", padx=14, pady=14)
+                ttk.Button(
+                    page,
+                    text="Открыть в обычном режиме",
+                    command=partial(self.open_user_tab, name),
+                ).pack(anchor="w", padx=14)
             tabs.select(self.advanced.page)  # type: ignore[no-untyped-call]
         self.help = HelpPanel(tabs)
 
@@ -245,6 +269,19 @@ class App:
         if load_error:
             self._log("app", f"Настройки не загружены. {load_error}")
         root.after(100, self._poll)
+
+    def open_user_tab(self, tab: str) -> None:
+        """Open an ordinary FLURUX window at the selected page via Explorer."""
+        exe = self.entry.parent / "FLURUX.exe"
+        if not exe.is_file():
+            messagebox.showinfo(
+                "FLURUX", "Откройте FLURUX в обычном режиме через меню «Пуск».", parent=self.root
+            )
+            return
+        try:
+            subprocess.Popen([str(exe), "/ordinary", tab], cwd=exe.parent)
+        except OSError as error:
+            messagebox.showerror("FLURUX", str(error), parent=self.root)
 
     def _card(
         self,
@@ -529,7 +566,7 @@ class App:
 
     def start(self) -> None:
         """Validate and launch the chosen session."""
-        if self.closing or self.pending or self.downloading:
+        if self.admin or self.closing or self.pending or self.downloading:
             return
         try:
             settings = self._settings_snapshot()
@@ -570,7 +607,7 @@ class App:
 
     def check(self, via_tor: bool, *, identity: bool = False) -> None:
         """Probe a URL or verify that the public endpoint sees a Tor exit."""
-        if self.closing or self.check_running or (via_tor and not self.tor_ready):
+        if self.admin or self.closing or self.check_running or (via_tor and not self.tor_ready):
             return
         try:
             url = TOR_CHECK if identity else validated_url(self.target.get())
@@ -749,8 +786,10 @@ class App:
         self.stop()
 
 
-def launch(data: Path, entry: Path, *, admin: bool = False) -> None:
+def launch(data: Path, entry: Path, *, admin: bool = False, tab: str = "") -> None:
     """Run the desktop application on the main thread."""
     root = tk.Tk()
-    App(root, data, entry, admin=admin)
+    app = App(root, data, entry, admin=admin)
+    if not admin and tab in app.user_tabs:
+        app.help.tabs.select(app.user_tabs[tab])  # type: ignore[no-untyped-call]
     root.mainloop()

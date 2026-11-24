@@ -51,6 +51,23 @@ def program_files() -> Path:
         return Path(winreg.QueryValueEx(key, "ProgramFilesDir")[0])
 
 
+def installed_desktop() -> Path:
+    """Read the machine-wide MSI location, including legacy installations."""
+    location = ct.create_unicode_buffer(32768)
+    size = wt.DWORD(len(location))
+    rc = ct.windll.msi.MsiGetProductInfoExW(
+        "{670D8AC3-5471-5723-97EF-D5CF18A9614E}",
+        None,
+        4,
+        "InstallLocation",
+        location,
+        ct.byref(size),
+    )
+    if rc == 0 and location.value and Path(location.value).is_absolute():
+        return Path(location.value)
+    return program_files() / "FLURUX"
+
+
 def sid_name(sid: ptr) -> str:
     """Convert a binary SID in a security descriptor to canonical text."""
     out = wt.LPWSTR()
@@ -65,9 +82,16 @@ def sid_name(sid: ptr) -> str:
 def protected_path(path: Path) -> None:
     """Reject junctions and effective write grants to nonadministrative principals."""
     root = program_files()
-    if not path.is_absolute() or not path.is_relative_to(root) or ".." in path.parts:
-        raise ValueError("Для привилегированного запуска требуется установка в Program Files.")
+    if not path.is_absolute() or ".." in path.parts:
+        raise ValueError("Укажите полный путь к установленному компоненту.")
+    custom = not path.is_relative_to(root)
+    if custom:
+        root = installed_desktop()
+        if not path.is_relative_to(root):
+            raise ValueError("Требуется защищённый каталог установленного приложения.")
+    ancestors = tuple(reversed(root.parents)) if custom else ()
     for part in (
+        *ancestors,
         root,
         *(
             root.joinpath(*path.relative_to(root).parts[:i])
@@ -95,7 +119,8 @@ def protected_path(path: Path) -> None:
                     continue
                 mask = ct.c_uint32.from_address(ace.value + 4).value
                 if tag != 0 or (
-                    mask & 0x500D0156 and sid_name(ptr(ace.value + 8)) not in TRUSTED_OWNERS
+                    mask & (0x500D0150 if part in ancestors else 0x500D0156)
+                    and sid_name(ptr(ace.value + 8)) not in TRUSTED_OWNERS
                 ):
                     raise ValueError(
                         "Права записи привилегированного компонента доступны обычному пользователю."

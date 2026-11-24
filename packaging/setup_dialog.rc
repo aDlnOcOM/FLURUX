@@ -1,0 +1,28 @@
+#include <windows.h>
+#include "setup_ids.h"
+
+IDD_INSTALL DIALOGEX 0, 0, 302, 112
+STYLE DS_MODALFRAME | DS_SETFONT | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Установка FLURUX"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "Папка &установки", -1, 12, 10, 272, 12
+    EDITTEXT IDC_FOLDER, 12, 25, 221, 16, ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON "&Обзор…", IDC_BROWSE, 237, 25, 53, 16
+    LTEXT "Ярлыки FLURUX появятся в меню «Пуск» и на рабочем столе.", -1, 12, 52, 277, 24
+    DEFPUSHBUTTON "&Установить", IDOK, 146, 86, 76, 17
+    PUSHBUTTON "Отмена", IDCANCEL, 227, 86, 63, 17
+END
+
+IDD_MAINTAIN DIALOGEX 0, 0, 315, 124
+STYLE DS_MODALFRAME | DS_SETFONT | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Обслуживание FLURUX"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "", IDC_VERSION, 12, 10, 291, 13
+    EDITTEXT IDC_FOLDER, 12, 26, 291, 16, ES_AUTOHSCROLL | ES_READONLY | WS_TABSTOP
+    LTEXT "Восстановление заменит файлы приложения и заново создаст ярлыки в меню «Пуск» и на рабочем столе. Личные профили сохранятся.", -1, 12, 52, 291, 36
+    DEFPUSHBUTTON "&Восстановить", IDOK, 11, 96, 136, 18
+    PUSHBUTTON "&Удалить…", IDC_REMOVE, 155, 96, 71, 18
+    PUSHBUTTON "Отмена", IDCANCEL, 234, 96, 69, 18
+END
