@@ -68,6 +68,28 @@ class DesktopTests(unittest.TestCase):
             return
         self.fail("Заголовок вкладки недоступен: " + title)
 
+    def test_window_controls_preserve_placement_and_keyboard_access(self) -> None:
+        chrome = self.app.chrome
+        self.assertTrue(chrome.hwnd)
+        minimize, maximize, _ = chrome.controls
+        initial = self.root.geometry()
+        maximize.focus_force()
+        self.root.update()
+        self.assertEqual(chrome.tip.get(), "Развернуть")
+        maximize.event_generate("<KeyPress-space>")
+        maximize.event_generate("<KeyRelease-space>")
+        self.pump(lambda: self.root.state() == "zoomed")
+        self.assertEqual(chrome.names()[1], "Восстановить размер")
+        maximize.invoke()
+        self.pump(lambda: self.root.state() == "normal")
+        self.pump(lambda: self.root.geometry() == initial)
+        minimize.invoke()
+        self.pump(lambda: self.root.state() == "iconic")
+        self.root.deiconify()
+        self.pump(lambda: self.root.state() == "normal")
+        self.click_top_tab("Каскады")
+        self.click_top_tab("Подключение")
+
     def test_switch_away_from_cascades_using_pointer(self) -> None:
         for scale in (1.333, 1.667, 2.0):
             self.root.tk.call("tk", "scaling", scale)
@@ -282,7 +304,7 @@ class DesktopTests(unittest.TestCase):
                 peer.settimeout(4)
                 self.assertIn(b"GET /", peer.recv(4096))
                 self.assertTrue(app.direct_check.instate(["disabled"]))
-                self.root.tk.call(self.root.protocol("WM_DELETE_WINDOW"))
+                app.chrome.controls[2].invoke()
                 self.assertTrue(app.closing)
                 self.pump(lambda: not app.check_running)
                 try:

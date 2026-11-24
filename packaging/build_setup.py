@@ -16,7 +16,7 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 RUNTIME_SHA256 = "93584a7bee14bf6b91a03efdbb128419147279a64934fbc95934c9f53e1191e5"
 SOURCE = ROOT / "packaging"
 
@@ -45,7 +45,7 @@ def icon(target: Path) -> None:
                 )
                 pixels.extend(
                     (
-                        *((145, 233, 192) if mark else (17, 24, 32)),
+                        *((238, 208, 139) if mark else (22, 23, 24)),
                         255 if dx * dx + dy * dy <= 0.185**2 else 0,
                     )
                 )
@@ -155,7 +155,7 @@ def compile_gui(
         + '"\n'
         + ('201 RCDATA "' + rc_path(package) + '"\n' if package else "")
         + ('#include "' + rc_path(SOURCE / "setup_dialog.rc") + '"\n' if package else "")
-        + '1 VERSIONINFO\n FILEVERSION 0,3,3,0\n PRODUCTVERSION 0,3,3,0\n FILEOS VOS_NT_WINDOWS32\n FILETYPE VFT_APP\n BEGIN\n BLOCK "StringFileInfo" BEGIN BLOCK "040904B0" BEGIN\n'
+        + '1 VERSIONINFO\n FILEVERSION 0,3,4,0\n PRODUCTVERSION 0,3,4,0\n FILEOS VOS_NT_WINDOWS32\n FILETYPE VFT_APP\n BEGIN\n BLOCK "StringFileInfo" BEGIN BLOCK "040904B0" BEGIN\n'
         + f'VALUE "FileDescription", "FLURUX {"Setup" if package else "Desktop"}\\0"\nVALUE "ProductName", "FLURUX\\0"\nVALUE "FileVersion", "{VERSION}\\0"\nVALUE "ProductVersion", "{VERSION}\\0"\n'
         + 'END END\nBLOCK "VarFileInfo" BEGIN VALUE "Translation", 0x0409, 1200 END\nEND\n',
         encoding="utf-8",
@@ -218,6 +218,7 @@ def build_setup(guard: Path, runtime: Path, output: Path) -> None:
         spec.loader.exec_module(module)
         msi = temp / "FLURUX-Desktop-x64.msi"
         paths = [*files, *(p.relative_to(ROOT) for p in (ROOT / "src").rglob("*.py"))]
+        paths.extend(p.relative_to(ROOT) for p in (ROOT / "src/route_manager/assets").glob("*.png"))
         # Win32 MAX_PATH includes the separator, longest relative filename, and terminator.
         max_folder = 258 - max(len(str(p).encode("utf-16le")) // 2 for p in paths)
         validator = temp / "folder_check.dll"

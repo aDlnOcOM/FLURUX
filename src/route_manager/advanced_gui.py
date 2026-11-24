@@ -8,6 +8,7 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 from tkinter import filedialog, messagebox, ttk
 
+from route_manager.accessibility import named
 from route_manager.form_view import FormView
 from route_manager.private_files import clean_sessions, private_directory
 from route_manager.profiles import (
@@ -32,6 +33,7 @@ from route_manager.routes import (
     synchronize,
 )
 from route_manager.security import unlock_network
+from route_manager.theme import NeonFrame
 
 
 class AdvancedPanel:
@@ -77,16 +79,25 @@ class AdvancedPanel:
         self.kind = ttk.Combobox(
             form, values=[STRATEGIES[k][0] for k in self.modes], state="readonly", width=40
         )
+        named(self.kind, "Стратегия")
         self.kind.current(0)
-        self.kind.pack(side="left", fill="x", expand=True)
+        form.columnconfigure(0, weight=3)
+        form.columnconfigure(2, weight=2)
+        ttk.Label(form, text="Стратегия", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        self.kind.grid(row=1, column=0, sticky="ew")
         self.kind.bind("<<ComboboxSelected>>", lambda _: self.new())
         self.new_button = ttk.Button(form, text="Новый профиль", command=self.new)
-        self.new_button.pack(side="left", padx=5)
-        self.pick = ttk.Combobox(form, state="readonly", width=24)
-        self.pick.pack(side="left", fill="x", expand=True)
+        self.new_button.grid(row=1, column=1, padx=6)
+        ttk.Label(form, text="Сохранённый профиль", style="Muted.TLabel").grid(
+            row=0, column=2, sticky="w"
+        )
+        self.pick = named(ttk.Combobox(form, state="readonly", width=20), "Сохранённый профиль")
+        self.pick.grid(row=1, column=2, sticky="ew")
         self.pick.bind("<<ComboboxSelected>>", self.choose)
-        self.editor = ttk.Notebook(self.page)
-        self.editor.grid(row=1, column=0, sticky="nsew", pady=6)
+        editor_frame = NeonFrame(self.page, gold=False)
+        editor_frame.grid(row=1, column=0, sticky="nsew", pady=6)
+        self.editor = named(ttk.Notebook(editor_frame.body), "Разделы профиля")
+        self.editor.pack(fill="both", expand=True)
         bar = ttk.Frame(self.page)
         bar.grid(row=2, column=0, sticky="ew")
         self.action_buttons = []
@@ -95,7 +106,12 @@ class AdvancedPanel:
             ("Настроить узлы по SSH", self.install),
             ("Подключить", self.start),
         ):
-            button = ttk.Button(bar, text=title, command=fn)
+            button = ttk.Button(
+                bar,
+                text=title,
+                command=fn,
+                style="Primary.TButton" if title == "Подключить" else "TButton",
+            )
             button.pack(side="left", padx=2)
             self.action_buttons.append(button)
         self.stop_button = ttk.Button(bar, text="Остановить", command=self.stop, state="disabled")
@@ -116,15 +132,18 @@ class AdvancedPanel:
         mesh = ttk.Frame(self.mesh_page)
         if not admin:
             mesh.pack(fill="both", expand=True)
-        ttk.Label(mesh, text="Узлы Tailscale").pack(anchor="w")
+        ttk.Label(mesh, text="Узлы Tailscale", style="Section.TLabel").pack(anchor="w")
+        peer_frame = NeonFrame(mesh, gold=False)
+        peer_frame.pack(fill="both", expand=True, pady=6)
         self.peers = ttk.Treeview(
-            mesh, columns=("ip", "state", "exit"), show="tree headings", height=8
+            peer_frame.body, columns=("ip", "state", "exit"), show="tree headings", height=8
         )
+        named(self.peers, "Узлы Tailscale")
         self.peers.heading("#0", text="Узел")
         for col, title in (("ip", "Адрес"), ("state", "Доступность"), ("exit", "Выход в интернет")):
             self.peers.heading(col, text=title)
             self.peers.column(col, width=110)
-        self.peers.pack(fill="both", expand=True, pady=6)
+        self.peers.pack(fill="both", expand=True)
         actions = ttk.Frame(mesh)
         actions.pack(fill="x")
         for title, fn in (
@@ -339,11 +358,11 @@ class AdvancedPanel:
         var = tk.StringVar(value=node[key])
         self.bindings.append((node, key, var))
         if options:
-            ttk.Combobox(frame, textvariable=var, values=options, state="readonly").grid(
-                row=row, column=1, sticky="ew"
-            )
+            named(
+                ttk.Combobox(frame, textvariable=var, values=options, state="readonly"), label
+            ).grid(row=row, column=1, sticky="ew")
         else:
-            ttk.Entry(frame, textvariable=var, show="•" if hidden else "").grid(
+            named(ttk.Entry(frame, textvariable=var, show="•" if hidden else ""), label).grid(
                 row=row, column=1, sticky="ew", pady=1
             )
         if file:
@@ -357,7 +376,9 @@ class AdvancedPanel:
                 if selected:
                     var.set(selected)
 
-            ttk.Button(frame, text="Обзор", command=browse).grid(row=row, column=2)
+            named(ttk.Button(frame, text="Обзор", command=browse), "Обзор — " + label).grid(
+                row=row, column=2
+            )
 
     def certificate(self, node: Obj) -> None:
         """Import a trusted public PEM from disk."""

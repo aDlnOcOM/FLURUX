@@ -23,7 +23,7 @@ def build(
     """Build a per-machine MSI with isolated code and no third-party engines."""
     if not msilib.AMD64:
         raise ValueError("Use 64-bit Python 3.12.")
-    version = "0.3.3" if desktop else "0.3.0"
+    version = "0.3.4" if desktop else "0.3.0"
     output = output.resolve()
     db = msilib.init_database(
         str(output),
@@ -106,6 +106,8 @@ def build(
     }
     for path in sorted((ROOT / "src").rglob("*.py")):
         package_files[path.relative_to(ROOT)] = path
+    for asset in (ROOT / "src/route_manager/assets").glob("*.png"):
+        package_files[asset.relative_to(ROOT)] = asset
     package_files[Path("Security/FluruxGuard.exe")] = guard
     for name in ("Prepare-Zapret.ps1", "zapret-files.json"):
         package_files[Path("Security") / name] = ROOT / "security" / name

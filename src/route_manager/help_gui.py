@@ -2,7 +2,9 @@ import tkinter as tk
 import webbrowser
 from tkinter import ttk
 
+from route_manager.accessibility import named
 from route_manager.help_topics import ARTICLES, Article, search
+from route_manager.theme import ACCENT, EDGE, INK, INPUT, TEXT, NeonFrame, text_navigation
 
 
 class HelpPanel:
@@ -12,11 +14,14 @@ class HelpPanel:
         self.tabs = tabs
         self.frame = ttk.Frame(tabs, padding=7)
         tabs.add(self.frame, text="Справка")
+        ttk.Label(self.frame, text="Справочник FLURUX", style="Section.TLabel").pack(
+            anchor="w", pady=(0, 7)
+        )
         bar = ttk.Frame(self.frame)
         bar.pack(fill="x", pady=(0, 7))
         ttk.Label(bar, text="Поиск по справке").pack(side="left", padx=(0, 9))
         self.query = tk.StringVar()
-        self.find = ttk.Entry(bar, textvariable=self.query)
+        self.find = named(ttk.Entry(bar, textvariable=self.query), "Поиск по справке")
         self.find.pack(side="left", fill="x", expand=True)
         ttk.Button(bar, text="Сбросить", command=lambda: self.query.set("")).pack(
             side="left", padx=(5, 0)
@@ -32,12 +37,14 @@ class HelpPanel:
             width=28,
             exportselection=False,
             font=("Segoe UI", 10),
-            background="#111c26",
-            foreground="#edf4f7",
-            selectbackground="#385747",
-            selectforeground="white",
+            background=INPUT,
+            foreground=TEXT,
+            selectbackground=ACCENT,
+            selectforeground=INK,
             relief="flat",
-            highlightthickness=0,
+            highlightthickness=1,
+            highlightbackground=EDGE,
+            highlightcolor=ACCENT,
         )
         scroll = ttk.Scrollbar(left, command=self.list.yview)
         scroll.pack(side="right", fill="y")
@@ -47,23 +54,30 @@ class HelpPanel:
         self.heading.pack(fill="x", pady=(0, 6))
         self.source = ttk.Button(right, text="Открыть первоисточник", command=self.open_source)
         self.source.pack(side="bottom", anchor="w", pady=(6, 0))
-        view = ttk.Frame(right)
-        view.pack(fill="both", expand=True)
+        article_frame = NeonFrame(right, gold=False)
+        article_frame.pack(fill="both", expand=True)
+        view = article_frame.body
         self.body = tk.Text(
             view,
             wrap="word",
             width=30,
             height=12,
-            background="#111c26",
-            foreground="#edf4f7",
+            background=INPUT,
+            foreground=TEXT,
             font=("Segoe UI", 11),
             padx=12,
             pady=8,
             spacing3=5,
             relief="flat",
-            selectbackground="#385747",
-            highlightthickness=0,
+            selectbackground=ACCENT,
+            highlightthickness=1,
+            highlightbackground=EDGE,
+            highlightcolor=ACCENT,
+            selectforeground=INK,
         )
+        named(self.body, "Текст статьи")
+        named(self.list, "Статьи справочника")
+        text_navigation(self.body)
         sy = ttk.Scrollbar(view, command=self.body.yview)
         sy.pack(side="right", fill="y")
         self.body.configure(yscrollcommand=sy.set)

@@ -10,7 +10,9 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 from tkinter import filedialog, messagebox, ttk
 
+from route_manager.accessibility import AccessibleControls, named
 from route_manager.advanced_gui import AdvancedPanel
+from route_manager.chrome import WindowBar
 from route_manager.config import (
     MODES,
     STRATEGIES,
@@ -29,16 +31,21 @@ from route_manager.help_gui import HelpPanel
 from route_manager.private_files import private_directory
 from route_manager.runtime import Session, Update, check_route
 from route_manager.security import program_files, protected_path
+from route_manager.theme import (
+    ACCENT,
+    EDGE,
+    HERO,
+    INK,
+    INPUT,
+    PANEL,
+    TEXT,
+    VERSION,
+    NeonFrame,
+    apply_style,
+    text_navigation,
+)
 from route_manager.tor_bundle import install_bundle, installed_tor
 
-BG = "#111820"
-PANEL = "#1a2530"
-INPUT = "#111c26"
-LINE = "#334452"
-TEXT = "#edf4f7"
-MUTED = "#b2c2cd"
-ACCENT = "#91e9c0"
-DANGER = "#ffad9e"
 ZAPRET_LINK = "https://github.com/bol-van/zapret-win-bundle"
 TOR_LINK = "https://www.torproject.org/download/tor/"
 BRIDGE_LINK = "https://support.torproject.org/ru/tor-browser/circumvention/getting-bridges/"
@@ -53,81 +60,6 @@ MODE_HELP = {
 def select_key(values: Mapping[str, str], display: str) -> str:
     """Resolve a combobox label to its configuration key."""
     return next(key for key, label in values.items() if label == display)
-
-
-def apply_style(root: tk.Tk) -> None:
-    """Apply Win32-friendly fonts and accessible colors to the window."""
-    root.configure(bg=BG)
-    style = ttk.Style(root)
-    style.theme_use("clam")
-    style.configure(
-        ".",
-        font=("Segoe UI", 10),
-        background=BG,
-        foreground=TEXT,
-        bordercolor=LINE,
-        lightcolor=LINE,
-        darkcolor=LINE,
-        focuscolor=ACCENT,
-    )
-    style.configure("Title.TLabel", font=("Segoe UI", 25, "bold"))
-    style.configure("Muted.TLabel", foreground=MUTED)
-    style.configure("Card.TFrame", background=PANEL)
-    style.configure("Card.TLabel", background=PANEL, foreground=TEXT)
-    style.configure("CardMuted.TLabel", background=PANEL, foreground=MUTED)
-    style.configure(
-        "CardHeading.TLabel", background=PANEL, foreground=TEXT, font=("Segoe UI", 12, "bold")
-    )
-    style.configure("CardReady.TLabel", background=PANEL, foreground=ACCENT)
-    style.configure("CardError.TLabel", background=PANEL, foreground=DANGER)
-    style.configure("TButton", background="#24333f", borderwidth=1, padding=(12, 7), relief="flat")
-    style.map(
-        "TButton",
-        background=[("disabled", PANEL), ("active", LINE)],
-        foreground=[("disabled", "#8797a4")],
-    )
-    style.configure(
-        "Primary.TButton", background=ACCENT, foreground="#12281e", font=("Segoe UI", 10, "bold")
-    )
-    style.map(
-        "Primary.TButton",
-        background=[("disabled", LINE), ("active", "#b0f4d4")],
-        foreground=[("disabled", MUTED), ("active", "#12281e")],
-    )
-    style.configure(
-        "TEntry", foreground=TEXT, fieldbackground=INPUT, insertcolor=TEXT, padding=(8, 6)
-    )
-    style.configure(
-        "TCombobox",
-        foreground=TEXT,
-        fieldbackground=INPUT,
-        background=LINE,
-        arrowcolor=TEXT,
-        padding=(8, 5),
-    )
-    style.map("TCombobox", fieldbackground=[("readonly", INPUT)], foreground=[("readonly", TEXT)])
-    root.option_add("*TCombobox*Listbox.background", INPUT)
-    root.option_add("*TCombobox*Listbox.foreground", TEXT)
-    root.option_add("*TCombobox*Listbox.selectBackground", LINE)
-    root.option_add("*TCombobox*Listbox.selectForeground", TEXT)
-    style.configure(
-        "TNotebook",
-        background=BG,
-        borderwidth=0,
-        lightcolor=BG,
-        darkcolor=BG,
-        tabmargins=(0, 0, 0, 8),
-    )
-    style.configure(
-        "TNotebook.Tab", padding=(16, 8), background=BG, foreground=MUTED, borderwidth=0
-    )
-    style.map(
-        "TNotebook.Tab",
-        background=[("selected", PANEL), ("active", LINE)],
-        foreground=[("selected", ACCENT), ("active", TEXT)],
-        expand=[("selected", (0, 0, 0, 0))],
-        padding=[("selected", (16, 8))],
-    )
 
 
 class App:
@@ -168,6 +100,9 @@ class App:
         self.closing = False
         self.log_count = 0
         self.status: dict[str, ttk.Label] = {}
+        self.ready_engines: set[str] = set()
+        self.expected_engines: set[str] = set()
+        self.overview = tk.StringVar(value="Отключено")
         self.mode = tk.StringVar(value=MODES.get(saved.mode, MODES["both"]))
         self.mode_help = tk.StringVar()
         self.winws = tk.StringVar(value=saved.winws)
@@ -179,7 +114,7 @@ class App:
         )
         self.port = tk.StringVar(value=saved.socks_port)
         self.target = tk.StringVar(value=saved.target)
-        self.probe_result = tk.StringVar(value="Укажите сайт и выберите маршрут для проверки.")
+        self.probe_result = tk.StringVar(value="Проверка ещё не запускалась.")
         self.bridge_sets = {
             "webtunnel": saved.webtunnel_bridges,
             "obfs4": saved.obfs4_bridges,
@@ -196,17 +131,21 @@ class App:
         app_icon = entry.parent / "FLURUX.ico"
         if app_icon.is_file():
             root.iconbitmap(str(app_icon))  # type: ignore[no-untyped-call]  # Tk stubs
-        root.geometry("900x620")
+        root.geometry(
+            f"{min(1080, max(800, root.winfo_screenwidth() - 72))}x{min(690, max(590, root.winfo_screenheight() - 110))}"
+        )
         root.minsize(800, 590)
         root.protocol("WM_DELETE_WINDOW", self.close)
         apply_style(root)
-        outer = ttk.Frame(root, padding=(24, 16, 24, 17))
+        shell = NeonFrame(root, cut=7)
+        shell.pack(fill="both", expand=True)
+        header = ttk.Frame(shell.body, padding=(13, 2, 1, 2))
+        header.pack(fill="x")
+        self.chrome = WindowBar(root, header, self.close, VERSION, admin)
+        ttk.Separator(shell.body).pack(fill="x")
+        outer = ttk.Frame(shell.body, padding=(12, 7, 12, 9))
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text="FLURUX", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(outer, text="Tor, zapret2, каскады VPN и Mesh", style="Muted.TLabel").pack(
-            anchor="w", pady=(0, 12)
-        )
-        tabs = ttk.Notebook(outer)
+        tabs = named(ttk.Notebook(outer, style="Main.TNotebook"), "Разделы FLURUX")
         tabs.pack(fill="both", expand=True)
         connection = ttk.Frame(tabs)
         settings = ttk.Frame(tabs)
@@ -228,6 +167,8 @@ class App:
             "settings": settings,
             "mesh": self.advanced.mesh_page,
         }
+        tabs.insert(1, self.advanced.page)
+        tabs.insert(2, self.advanced.mesh_page)
         tabs.enable_traversal()
         if admin:
             for name, page in self.user_tabs.items():
@@ -263,6 +204,7 @@ class App:
             text="Справка · F1",
             command=lambda: self.help.show(self.advanced.current["kind"]),
         ).grid(row=0, column=1, sticky="e", padx=(6, 0))
+        self.accessibility = AccessibleControls(root)
         self._mode_changed()
         self._transport_changed()
         self._refresh_controls()
@@ -292,95 +234,137 @@ class App:
         *,
         padding: tuple[int, ...] = (0, 0, 0, 0),
     ) -> ttk.Frame:
-        card = ttk.Frame(parent, style="Card.TFrame", padding=(15, 11))
-        card.grid(
+        panel = NeonFrame(parent, surface=PANEL, gold=False, cut=7)
+        panel.grid(
             row=row,
             column=column,
             sticky="nsew",
             padx=(padding[0], padding[2]),
             pady=(padding[1], padding[3]),
         )
-        ttk.Label(card, text=title, style="CardHeading.TLabel").pack(anchor="w")
+        card = panel.body
+        card.configure(padding=(9, 5))
+        heading = ttk.Frame(card, style="Card.TFrame")
+        heading.pack(anchor="w")
+        tk.Frame(heading, bg=ACCENT, width=3, height=15, takefocus=False).pack(
+            side="left", padx=(0, 8)
+        )
+        ttk.Label(heading, text=title, style="CardHeading.TLabel").pack(side="left")
         return card
 
     def _connection(self, parent: ttk.Frame) -> None:
         parent.columnconfigure((0, 1), weight=1, uniform="routes")
-        for column, (engine, title) in enumerate((("zapret", "zapret2"), ("tor", "Tor"))):
-            card = self._card(
-                parent, title, column=column, padding=(0, 0, 7, 11) if not column else (7, 0, 0, 11)
-            )
-            label = ttk.Label(card, text="Остановлен", style="CardMuted.TLabel")
-            label.pack(anchor="w", pady=(5, 0))
+        parent.rowconfigure(0, weight=3)
+        parent.rowconfigure(1, weight=2)
+        hero_frame = NeonFrame(parent, surface=HERO, cut=12)
+        hero_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0, 10))
+        hero = hero_frame.body
+        hero.columnconfigure(0, weight=6, uniform="hero")
+        hero.columnconfigure(1, weight=5, uniform="hero")
+        hero.rowconfigure(0, weight=1)
+
+        overview = ttk.Frame(hero, style="Hero.TFrame", padding=(20, 10))
+        overview.grid(row=0, column=0, sticky="w")
+        ttk.Label(overview, text="СОСТОЯНИЕ МАРШРУТА", style="Kicker.TLabel").pack(anchor="w")
+        ttk.Label(overview, textvariable=self.overview, style="HeroTitle.TLabel").pack(
+            anchor="w", pady=(3, 7)
+        )
+        engines = ttk.Frame(overview, style="Hero.TFrame")
+        engines.pack(anchor="w")
+        for column, (engine, title) in enumerate((("tor", "Tor"), ("zapret", "zapret2"))):
+            box = ttk.Frame(engines, style="Hero.TFrame")
+            box.grid(row=0, column=column, sticky="nw", padx=(0, 18))
+            ttk.Label(box, text=title, style="Engine.TLabel").pack(anchor="w")
+            label = ttk.Label(box, text="Остановлен", style="EngineState.TLabel", wraplength=144)
+            label.pack(anchor="w")
             self.status[engine] = label
-        profile = ttk.Frame(parent, style="Card.TFrame", padding=(15, 11))
-        profile.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 11))
-        ttk.Label(profile, text="Режим подключения", style="CardHeading.TLabel").pack(anchor="w")
+        art = tk.Canvas(
+            hero, bg=HERO, highlightthickness=0, borderwidth=0, width=1, height=1, takefocus=False
+        )
+        art.grid(row=0, column=1, sticky="nsew", padx=(0, 4), pady=2)
+        self.route_art = tk.PhotoImage(
+            master=self.root, file=Path(__file__).with_name("assets") / "route.png"
+        )
+        image = art.create_image(0, 0, image=self.route_art)
+        art.bind("<Configure>", lambda e: art.coords(image, e.width / 2, e.height / 2))
+
+        profile = self._card(parent, "Маршрут", row=1, column=0, padding=(0, 0, 5, 0))
+        self._caption(profile, "Режим подключения")
         self.mode_box = self._choice(profile, self.mode, MODES)
-        self.mode_box.pack(fill="x", pady=(6, 5))
+        self.mode_box.pack(fill="x")
         self.mode_box.bind("<<ComboboxSelected>>", self._mode_changed)
-        ttk.Label(
-            profile, textvariable=self.mode_help, style="CardMuted.TLabel", wraplength=650
-        ).pack(anchor="w")
+        instructions = ttk.Label(
+            profile, textvariable=self.mode_help, style="CardMuted.TLabel", wraplength=320
+        )
+        instructions.pack(anchor="w", pady=(7, 8), fill="x")
+        instructions.bind(
+            "<Configure>", lambda e: instructions.configure(wraplength=max(120, e.width - 4))
+        )
         actions = ttk.Frame(profile, style="Card.TFrame")
-        actions.pack(fill="x", pady=(9, 0))
+        actions.pack(fill="x")
         self.start_button = ttk.Button(
             actions, text="Запустить", style="Primary.TButton", command=self.start
         )
-        self.start_button.pack(side="left", padx=(0, 7))
+        self.start_button.pack(side="left", padx=(0, 6))
         self.stop_button = ttk.Button(actions, text="Остановить", command=self.stop)
         self.stop_button.pack(side="left")
-        self.copy_button = ttk.Button(actions, text="Копировать SOCKS5", command=self.copy_proxy)
-        self.copy_button.pack(side="right")
-        self.edge_button = ttk.Button(
-            actions, text="Открыть Edge через Tor", command=self.open_edge
+        proxy = ttk.Frame(profile, style="Card.TFrame")
+        proxy.pack(fill="x", side="bottom", pady=(7, 0))
+        ttk.Separator(proxy).pack(fill="x", pady=(0, 6))
+        ttk.Label(proxy, text="Клиенты Tor", style="CardMuted.TLabel").pack(anchor="w", pady=(0, 3))
+        client_actions = ttk.Frame(proxy, style="Card.TFrame")
+        client_actions.pack(anchor="w")
+        self.edge_button = ttk.Button(client_actions, text="Edge через Tor", command=self.open_edge)
+        self.edge_button.pack(side="left", padx=(0, 5))
+        self.copy_button = ttk.Button(
+            client_actions, text="Копировать SOCKS5", command=self.copy_proxy
         )
-        self.edge_button.pack(side="right", padx=(0, 7))
+        self.copy_button.pack(side="left")
 
-        check = ttk.Frame(parent, style="Card.TFrame", padding=(15, 11))
-        check.grid(row=2, column=0, columnspan=2, sticky="nsew")
-        ttk.Label(check, text="Проверка доступа", style="CardHeading.TLabel").pack(anchor="w")
-        target_row = ttk.Frame(check, style="Card.TFrame")
-        target_row.pack(fill="x", pady=(7, 0))
-        ttk.Label(target_row, text="Адрес сайта", style="Card.TLabel").pack(
-            side="left", padx=(0, 9)
-        )
-        ttk.Entry(target_row, textvariable=self.target).pack(side="left", fill="x", expand=True)
-        check_actions = ttk.Frame(check, style="Card.TFrame")
-        check_actions.pack(fill="x", pady=(8, 5))
+        check = self._card(parent, "Проверка доступа", row=1, column=1, padding=(5, 0, 0, 0))
+        self._caption(check, "Адрес сайта")
+        self.target_field = named(ttk.Entry(check, textvariable=self.target), "Адрес сайта")
+        self.target_field.pack(fill="x")
+        controls = ttk.Frame(check, style="Card.TFrame")
+        controls.pack(fill="x", pady=(8, 5))
         self.direct_check = ttk.Button(
-            check_actions, text="Без SOCKS5", command=lambda: self.check(False)
+            controls, text="Без SOCKS5", command=lambda: self.check(False)
         )
-        self.direct_check.pack(side="left", padx=(0, 7))
-        self.tor_check = ttk.Button(
-            check_actions, text="Через Tor", command=lambda: self.check(True)
-        )
-        self.tor_check.pack(side="left", padx=(0, 7))
+        self.direct_check.pack(side="left", padx=(0, 6))
+        self.tor_check = ttk.Button(controls, text="Через Tor", command=lambda: self.check(True))
+        self.tor_check.pack(side="left")
         self.ip_check = ttk.Button(
-            check_actions,
-            text="Подтвердить выход Tor",
-            command=lambda: self.check(True, identity=True),
+            check, text="Подтвердить выход Tor", command=lambda: self.check(True, identity=True)
         )
-        self.ip_check.pack(side="left")
-        ttk.Label(
-            check, textvariable=self.probe_result, style="CardMuted.TLabel", wraplength=650
-        ).pack(anchor="w")
+        self.ip_check.pack(anchor="w", pady=(0, 5))
+        feedback = ttk.Frame(check, style="Card.TFrame")
+        feedback.pack(side="bottom", fill="x")
+        ttk.Separator(feedback).pack(fill="x", pady=(0, 6))
+        ttk.Label(feedback, text="Результат проверки", style="Card.TLabel").pack(
+            anchor="w", pady=(0, 3)
+        )
+        result = ttk.Label(
+            feedback, textvariable=self.probe_result, style="CardMuted.TLabel", wraplength=290
+        )
+        result.pack(anchor="w", fill="x")
+        result.bind("<Configure>", lambda e: result.configure(wraplength=max(120, e.width - 4)))
 
     def _settings(self, parent: ttk.Frame, domains: str) -> None:
         parent.columnconfigure((0, 1), weight=1, uniform="settings")
         parent.rowconfigure(0, weight=1)
         zapret = self._card(parent, "zapret2", padding=(0, 0, 7, 0))
         tor = self._card(parent, "Tor", column=1, padding=(7, 0, 0, 0))
-        self._caption(zapret, "Привилегированный движок")
+        self._caption(zapret, "Системный движок")
         ttk.Label(
             zapret,
-            text="FLURUX Security · установка из MSI, затем импорт проверенного комплекта zapret2 (F1).",
+            text="Помощник FLURUX входит в установщик. Добавьте проверенный комплект zapret2 по инструкции в справке.",
             style="CardMuted.TLabel",
             wraplength=270,
         ).pack(anchor="w")
         self._caption(zapret, "Стратегия")
         self._choice(zapret, self.strategy, STRATEGIES).pack(fill="x")
         self._caption(zapret, "Домены для zapret2")
-        self.domains = self._text(zapret, 4)
+        self.domains = named(self._text(zapret, 4), "Домены для zapret2")
         self.domains.insert("1.0", domains)
         ttk.Label(
             zapret,
@@ -388,9 +372,9 @@ class App:
             style="CardMuted.TLabel",
             wraplength=275,
         ).pack(anchor="w", pady=(6, 9))
-        ttk.Button(zapret, text="Сохранить настройки", command=self.save).pack(
-            anchor="w", pady=(5, 0)
-        )
+        ttk.Button(
+            zapret, text="Сохранить настройки", style="Primary.TButton", command=self.save
+        ).pack(anchor="w", pady=(5, 0))
 
         self.settings_feedback = tk.StringVar()
         ttk.Label(
@@ -402,7 +386,7 @@ class App:
         box.pack(fill="x")
         box.bind("<<ComboboxSelected>>", self._transport_changed)
         self._caption(tor, "Строки мостов")
-        self.bridges = self._text(tor, 4)
+        self.bridges = named(self._text(tor, 4), "Строки мостов")
         self.bridges.insert("1.0", self.bridge_sets[self.shown_transport])
         ttk.Label(
             tor, textvariable=self.bridge_hint, style="CardMuted.TLabel", wraplength=304
@@ -410,21 +394,25 @@ class App:
         extra = ttk.Frame(tor, style="Card.TFrame")
         extra.pack(fill="x")
         ttk.Label(extra, text="Порт SOCKS5", style="Card.TLabel").pack(side="left", padx=(0, 5))
-        ttk.Entry(extra, textvariable=self.port, width=6).pack(side="left")
+        named(ttk.Entry(extra, textvariable=self.port, width=6), "Порт SOCKS5").pack(side="left")
         ttk.Button(extra, text="Получить мосты", command=lambda: webbrowser.open(BRIDGE_LINK)).pack(
             side="right"
         )
 
     def _journal(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="Журнал событий", style="Section.TLabel").pack(
+            anchor="w", pady=(0, 6)
+        )
         toolbar = ttk.Frame(parent)
         toolbar.pack(fill="x", pady=(0, 7))
         ttk.Button(toolbar, text="Копировать", command=self.copy_log).pack(side="left", padx=(0, 7))
         ttk.Button(toolbar, text="Очистить", command=self.clear_log).pack(side="left")
-        log_frame = ttk.Frame(parent)
-        log_frame.pack(fill="both", expand=True)
+        log_border = NeonFrame(parent, gold=False)
+        log_border.pack(fill="both", expand=True)
+        log_frame = log_border.body
         scrollbar = ttk.Scrollbar(log_frame)
         scrollbar.pack(side="right", fill="y")
-        self.journal = self._text(log_frame, 12, expand=True)
+        self.journal = named(self._text(log_frame, 12, expand=True), "Журнал событий")
         self.journal.configure(
             yscrollcommand=scrollbar.set, font=("Consolas", 10), state="disabled"
         )
@@ -436,7 +424,9 @@ class App:
         self._caption(parent, title)
         row = ttk.Frame(parent, style="Card.TFrame")
         row.pack(fill="x")
-        ttk.Entry(row, textvariable=variable, width=17).pack(side="left", fill="x", expand=True)
+        named(ttk.Entry(row, textvariable=variable, width=17), title).pack(
+            side="left", fill="x", expand=True
+        )
         ttk.Button(row, text="Обзор", command=lambda: self.choose_file(variable, name)).pack(
             side="left", padx=(5, 0)
         )
@@ -446,8 +436,18 @@ class App:
 
     @staticmethod
     def _choice(parent: ttk.Frame, value: tk.StringVar, values: Mapping[str, str]) -> ttk.Combobox:
-        return ttk.Combobox(
-            parent, textvariable=value, values=tuple(values.values()), state="readonly"
+        label = (
+            "Режим подключения"
+            if values is MODES
+            else "Стратегия"
+            if values is STRATEGIES
+            else "Транспорт"
+        )
+        return named(
+            ttk.Combobox(
+                parent, textvariable=value, values=tuple(values.values()), state="readonly"
+            ),
+            label,
         )
 
     @staticmethod
@@ -465,9 +465,10 @@ class App:
             background=INPUT,
             foreground=TEXT,
             insertbackground=TEXT,
-            selectbackground=LINE,
+            selectbackground=ACCENT,
+            selectforeground=INK,
             highlightthickness=1,
-            highlightbackground=LINE,
+            highlightbackground=EDGE,
             highlightcolor=ACCENT,
             borderwidth=0,
             padx=7,
@@ -475,6 +476,7 @@ class App:
             undo=True,
         )
         text.pack(fill="both" if expand else "x", expand=expand)
+        text_navigation(text)
         return text
 
     def _mode_changed(self, event: "tk.Event[tk.Misc] | None" = None) -> None:
@@ -586,9 +588,12 @@ class App:
         self.tor_ready = False
         self.tor_port = tor.port if tor else None
         self.pending = {name for name, enabled in (("zapret", zapret), ("tor", tor)) if enabled}
+        self.ready_engines.clear()
+        self.expected_engines = set(self.pending)
         for engine, label in self.status.items():
             label.configure(
-                text="Запуск…" if engine in self.pending else "Остановлен", style="CardMuted.TLabel"
+                text="Запуск…" if engine in self.pending else "Остановлен",
+                style="EngineState.TLabel",
             )
         self._log("app", f"Выбран режим {MODES[settings.mode]}.")
         self.session = Session(self.data, self.entry, self.events)
@@ -687,6 +692,20 @@ class App:
             if self.downloading
             else self.session is not None and self.session.stop.is_set()
         )
+        if active and stopping:
+            summary = "Остановка"
+        elif self.downloading:
+            summary = "Загрузка Tor"
+        elif self.pending and self.expected_engines == self.ready_engines:
+            summary = "Маршрут активен"
+        elif any(str(label.cget("text")).startswith("Ошибка") for label in self.status.values()):
+            summary = "Ошибка маршрута"
+        elif self.pending:
+            summary = "Подключение"
+        else:
+            summary = "Отключено"
+        if self.overview.get() != summary:
+            self.overview.set(summary)
         self.start_button.configure(state="disabled" if active or self.closing else "normal")
         self.stop_button.configure(state="normal" if active and not stopping else "disabled")
         self.mode_box.configure(state="disabled" if active else "readonly")
@@ -699,6 +718,7 @@ class App:
             )
 
     def _poll(self) -> None:
+        self.chrome.dispatch()
         for _ in range(80):
             try:
                 event = self.events.get_nowait()
@@ -718,7 +738,11 @@ class App:
                     else:
                         messagebox.showerror("Загрузка Tor", event.message, parent=self.root)
             elif event.kind == "status":
-                style = "CardReady.TLabel" if event.ready else "CardMuted.TLabel"
+                if event.ready:
+                    self.ready_engines.add(event.engine)
+                else:
+                    self.ready_engines.discard(event.engine)
+                style = "CardReady.TLabel" if event.ready else "EngineState.TLabel"
                 if event.message.startswith("Ошибка"):
                     style = "CardError.TLabel"
                 self.status[event.engine].configure(text=event.message, style=style)
