@@ -2,7 +2,6 @@
 
 import base64
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -108,9 +107,21 @@ class SecurityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = private_directory(Path(d) / "sessions")
             with private_session(root) as live:
-                env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
-                code = "import sys,os;from pathlib import Path;from route_manager.private_files import private_session;c=private_session(Path(sys.argv[1]));p=c.__enter__();(p/'route.json').write_text('test');os._exit(0)"
-                subprocess.run([sys.executable, "-c", code, str(root)], env=env, check=True)
+                source = Path(__file__).resolve().parents[1] / "src"
+                code = """
+import os
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from route_manager.private_files import private_session
+lease = private_session(Path(sys.argv[1]))
+folder = lease.__enter__()
+(folder / "route.json").write_text("test")
+os._exit(0)
+"""
+                subprocess.run(
+                    [sys.executable, "-I", "-c", code, str(root), str(source)], check=True
+                )
                 self.assertEqual(len(list(root.glob("session-*"))), 2)
                 clean_sessions(root)
                 self.assertEqual(list(root.glob("session-*")), [live])
