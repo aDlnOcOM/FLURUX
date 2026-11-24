@@ -1,6 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+if exist "%~dp0FLURUX.exe" (
+    start "" "%~dp0FLURUX.exe"
+    exit /b 0
+)
 where py.exe >nul 2>&1
 if not errorlevel 1 (
     py -3 -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1

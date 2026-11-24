@@ -13,17 +13,17 @@ ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ID = uuid.UUID("23970cfd-8244-4722-b289-b6df91becb24")
 
 
-def build(guard: Path, output: Path) -> None:
+def build(guard: Path, output: Path, desktop: dict[Path, Path] | None = None) -> None:
     """Build a per-machine MSI with isolated code and no third-party engines."""
     if not msilib.AMD64:
         raise ValueError("Use 64-bit Python 3.12.")
-    version = "0.3.0"
+    version = "0.3.1" if desktop else "0.3.0"
     output = output.resolve()
     db = msilib.init_database(
         str(output),
         schema,
-        "FLURUX Security x64",
-        "{" + str(uuid.uuid5(PROJECT_ID, version)).upper() + "}",
+        "FLURUX" if desktop else "FLURUX Security x64",
+        "{" + str(uuid.uuid5(PROJECT_ID, "0.3.0")).upper() + "}",
         version,
         "FLURUX",
     )
@@ -49,6 +49,8 @@ def build(guard: Path, output: Path) -> None:
     package_files[Path("Security/FluruxGuard.exe")] = guard
     for name in ("Prepare-Zapret.ps1", "zapret-files.json"):
         package_files[Path("Security") / name] = ROOT / "security" / name
+    if desktop:
+        package_files.update(desktop)
     with tempfile.TemporaryDirectory() as tmp:
         pins = Path(tmp) / "release_pins.py"
         source = ROOT / "src/route_manager/release_pins.py"
@@ -68,7 +70,12 @@ def build(guard: Path, output: Path) -> None:
                 child = parent / part
                 if child not in dirs:
                     name = "dir_" + str(len(dirs))
-                    dst = msilib.Directory(db, cab, dirs[parent], ".", name, part, 0)
+                    destination = (
+                        part
+                        if len(part) <= 8 and "." not in part
+                        else dirs[parent].make_short(part) + "|" + part
+                    )
+                    dst = msilib.Directory(db, cab, dirs[parent], ".", name, destination, 0)
                     dirs[child] = dst
                 parent = child
             folder = dirs[parent]
@@ -80,7 +87,33 @@ def build(guard: Path, output: Path) -> None:
                 relative.name,
                 "{" + str(uuid.uuid5(PROJECT_ID, "file/" + relative.as_posix())) + "}",
             )
-            folder.add_file(relative.name, str(source_file.resolve()))
+            file_id = folder.add_file(relative.name, str(source_file.resolve()))
+            if relative == Path("FLURUX.exe"):
+                msilib.Directory(db, cab, root, ".", "ProgramMenuFolder", ".", 0)
+                msilib.add_data(
+                    db,
+                    "Shortcut",
+                    [
+                        (
+                            "MenuFLURUX",
+                            "ProgramMenuFolder",
+                            "FLURUX",
+                            component,
+                            "[#" + file_id + "]",
+                            None,
+                            "FLURUX",
+                            None,
+                            None,
+                            None,
+                            1,
+                            "appdir",
+                        )
+                    ],
+                )
+                msilib.add_data(db, "Property", [("ARPPRODUCTICON", "FluruxIcon")])
+                msilib.add_data(
+                    db, "Icon", [("FluruxIcon", msilib.Binary(str(source_file.resolve())))]
+                )
         cab.commit(db)
         db.Commit()
 

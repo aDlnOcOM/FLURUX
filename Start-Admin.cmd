@@ -2,6 +2,10 @@
 setlocal
 rem Run this installed file with "Run as administrator" for TUN or AmneziaWG.
 rem Only system-wide Python installations are considered.
+if exist "%~dp0runtime\pythonw.exe" (
+    start "" "%~dp0FLURUX.exe"
+    exit /b 0
+)
 for %%V in (314 313 312) do (
     if exist "%ProgramW6432%\Python%%V\pythonw.exe" (
         start "" "%ProgramW6432%\Python%%V\pythonw.exe" -I -B "%~dp0run.pyw"
