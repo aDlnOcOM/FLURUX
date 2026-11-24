@@ -87,14 +87,14 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
         if(installed){
             unsigned major=0,minor=0,patch=0;
             if(swscanf_s(version,L"%u.%u.%u",&major,&minor,&patch)!=3 ||
-               major>0 || minor>3 || (minor==3 && patch>1)){
+               major>0 || minor>3 || (minor==3 && patch>2)){
                 MessageBoxW(nullptr,L"Уже установлена более новая версия FLURUX.",L"FLURUX",MB_ICONINFORMATION);
                 return ERROR_PRODUCT_VERSION;
             }
         }
         if(MessageBoxW(nullptr,installed?
-            L"Обновить или восстановить FLURUX 0.3.1 и открыть приложение?":
-            L"Установить FLURUX 0.3.1 и открыть приложение?\n\nВсё необходимое для запуска входит в комплект. Ярлык появится в меню «Пуск».",
+            L"Обновить или восстановить FLURUX 0.3.2 и открыть приложение?":
+            L"Установить FLURUX 0.3.2 и открыть приложение?\n\nВсё необходимое для запуска входит в комплект. Ярлык появится в меню «Пуск».",
             L"Установка FLURUX",MB_OKCANCEL|MB_ICONINFORMATION)!=IDOK)return ERROR_INSTALL_USEREXIT;
         Staging temp;
         // Pin the staging directory as well as the payload while MSI opens its source by name.

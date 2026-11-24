@@ -17,7 +17,7 @@ def build(guard: Path, output: Path, desktop: dict[Path, Path] | None = None) ->
     """Build a per-machine MSI with isolated code and no third-party engines."""
     if not msilib.AMD64:
         raise ValueError("Use 64-bit Python 3.12.")
-    version = "0.3.1" if desktop else "0.3.0"
+    version = "0.3.2" if desktop else "0.3.0"
     output = output.resolve()
     db = msilib.init_database(
         str(output),

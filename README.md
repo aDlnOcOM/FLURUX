@@ -4,7 +4,7 @@
 
 ## Установка одним файлом
 
-Скачайте **FLURUX-0.3.1-Setup-x64.exe** из выпуска для Windows 10/11 x64. Откройте файл и подтвердите «Установить FLURUX». После установки программа откроется. Для следующих запусков используйте **Пуск → FLURUX**. Python и Tk входят в установщик.
+Скачайте **FLURUX-0.3.2-Setup-x64.exe** из выпуска для Windows 10/11 x64. Откройте файл и подтвердите «Установить FLURUX». После установки программа откроется. Для следующих запусков используйте **Пуск → FLURUX**. Python и Tk входят в установщик.
 
 Для первого подключения нажмите **Запустить** и подтвердите загрузку Tor (23 МБ). FLURUX скачает официальный архив, проверит SHA-256 и сохранит файлы для следующих подключений. Дождитесь 100% и нажмите **Открыть Edge через Tor**. Если прямой вход недоступен, откройте **Настройки → Транспорт → Snowflake** и подключитесь снова. Параметры уже настроенных профилей сохраняются. Установка EXE работает офлайн, получение Tor в первый раз требует доступа к сайту Tor Project. Остальные движки настраиваются в соответствующих профилях.
 
@@ -71,7 +71,7 @@ Ruff и mypy нужны только для разработки и ставят
 
 ## Каскады и свои узлы
 
-Во вкладке **Каскады** выберите стратегию, нажмите **Новый профиль** и заполните вход и выход. На вкладке профиля укажите путь к движку Windows. Для готового прокси или VPN используйте выданные вам реквизиты. Для собственного сервера добавьте SSH-псевдоним, проверьте его host key в OpenSSH и нажмите **Настроить узлы по SSH**. Перед выполнением приложение покажет список узлов и ролей. Поддерживаются Debian/Ubuntu с systemd, Python 3.10+ и root либо sudo без запроса пароля. AmneziaWG устанавливается через PPA на Ubuntu.
+Во вкладке **Каскады** выберите стратегию и заполните поля профиля. Кнопка **Новый профиль** создаёт ещё один профиль выбранной стратегии. На вкладке профиля укажите путь к движку Windows. Для готового прокси или VPN используйте выданные вам реквизиты. Для собственного сервера добавьте SSH-псевдоним, проверьте его host key в OpenSSH и нажмите **Настроить узлы по SSH**. Перед выполнением приложение покажет список узлов и ролей. Поддерживаются Debian/Ubuntu с systemd, Python 3.10+ и root либо sudo без запроса пароля. AmneziaWG устанавливается через PPA на Ubuntu.
 
 Базовые профили используют sing-box с поддержкой OpenVPN, WireGuard, QUIC и uTLS. Серверный установщик закрепляет sing-box 1.14.4, для экспериментального CONNECT-IP — 1.15.0-alpha.13. Для Shadowsocks через WebSocket с TLS используется Xray 26.11.9. CONNECT-UDP реализован на Python через HTTP/1.1 Upgrade и капсулы DATAGRAM. Firefox, OpenSSH, AmneziaWG, Tailscale и Psiphon Tunnel Core используются для одноимённых профилей. Windows-движки устанавливаются отдельно. [sing-box](https://github.com/SagerNet/sing-box/releases) · [Xray](https://github.com/XTLS/Xray-core/releases) · [Tailscale](https://tailscale.com/download/windows)
 
@@ -98,5 +98,5 @@ py -3.12 security\build_msi.py security\build\FluruxGuard.exe FLURUX-Security-x6
 
 ```bat
 security\Build-Guard.cmd
-py -3.12 packaging\build_setup.py security\build\FluruxGuard.exe cpython-3.12.16+20261123-x86_64-pc-windows-msvc-install_only.tar.gz release-assets\v0.3.1\FLURUX-0.3.1-Setup-x64.exe
+py -3.12 packaging\build_setup.py security\build\FluruxGuard.exe cpython-3.12.16+20261123-x86_64-pc-windows-msvc-install_only.tar.gz release-assets\v0.3.2\FLURUX-0.3.2-Setup-x64.exe
 ```
