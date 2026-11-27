@@ -17,7 +17,7 @@ DANGER = "#ffc0ad"
 INK = "#17150f"
 MONO = "Consolas"
 DISPLAY = "Bahnschrift"
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 
 
 def apply_style(root: tk.Tk) -> None:

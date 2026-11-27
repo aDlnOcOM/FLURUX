@@ -1,6 +1,6 @@
 """SHA-256 of Windows release files, derived from verified release archives."""
 
-GUARD_HASH = "99e21ddc7b24f6422917e6b1eee6dfc0bee2ce7c98f6f888d8fe4dd51cc4565d"
+GUARD_HASH = "67c24443419581624077326d9c356682be5362d945ff0c20da5f01dddd920193"
 ENGINE_FILES = {
     "8f30682ee198855440d2a7fe070d5d3653793b2d01bb8c85eea88f93bbe7c8b9": {
         "libcronet.dll": "3217c6260fbca5f16072e0b79735742f40109a63bb0ff88fd6b96dd6b54a2928",

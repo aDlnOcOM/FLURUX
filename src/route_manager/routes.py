@@ -547,7 +547,14 @@ def setup(p: Obj, folder: Path, cache: Path) -> tuple[list[str], str]:
     return args, "Системный TUN" if p["system_tun"] else "SOCKS5 " + local
 
 
-def start_route(p: Obj, stop: threading.Event, notify: Notify, cache: Path) -> None:
+def start_route(
+    p: Obj,
+    stop: threading.Event,
+    notify: Notify,
+    cache: Path,
+    *,
+    ready: Callable[[], None] | None = None,
+) -> None:
     """Supervise one route and tear down its processes on stop."""
     if (p["system_tun"] or p["kind"] == "awg") and not ctypes.windll.shell32.IsUserAnAdmin():
         raise ValueError(
@@ -577,6 +584,8 @@ def start_route(p: Obj, stop: threading.Event, notify: Notify, cache: Path) -> N
             command(args)
             try:
                 notify(desc + " · служба запущена")
+                if ready:
+                    ready()
                 stop.wait()
             finally:
                 command([args[0], "/uninstalltunnelservice", name])
@@ -627,6 +636,8 @@ def start_route(p: Obj, stop: threading.Event, notify: Notify, cache: Path) -> N
                     )
                 if not reported and monotonic() - since > 1:
                     notify(desc + " · процесс запущен")
+                    if ready:
+                        ready()
                     reported = True
 
 

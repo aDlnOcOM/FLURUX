@@ -16,7 +16,7 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 RUNTIME_SHA256 = "93584a7bee14bf6b91a03efdbb128419147279a64934fbc95934c9f53e1191e5"
 SOURCE = ROOT / "packaging"
 
@@ -155,7 +155,7 @@ def compile_gui(
         + '"\n'
         + ('201 RCDATA "' + rc_path(package) + '"\n' if package else "")
         + ('#include "' + rc_path(SOURCE / "setup_dialog.rc") + '"\n' if package else "")
-        + '1 VERSIONINFO\n FILEVERSION 0,3,4,0\n PRODUCTVERSION 0,3,4,0\n FILEOS VOS_NT_WINDOWS32\n FILETYPE VFT_APP\n BEGIN\n BLOCK "StringFileInfo" BEGIN BLOCK "040904B0" BEGIN\n'
+        + '1 VERSIONINFO\n FILEVERSION 0,3,5,0\n PRODUCTVERSION 0,3,5,0\n FILEOS VOS_NT_WINDOWS32\n FILETYPE VFT_APP\n BEGIN\n BLOCK "StringFileInfo" BEGIN BLOCK "040904B0" BEGIN\n'
         + f'VALUE "FileDescription", "FLURUX {"Setup" if package else "Desktop"}\\0"\nVALUE "ProductName", "FLURUX\\0"\nVALUE "FileVersion", "{VERSION}\\0"\nVALUE "ProductVersion", "{VERSION}\\0"\n'
         + 'END END\nBLOCK "VarFileInfo" BEGIN VALUE "Translation", 0x0409, 1200 END\nEND\n',
         encoding="utf-8",

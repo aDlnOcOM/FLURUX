@@ -19,7 +19,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     std::wstring operation=argc==3?argv[1]:L"", tab=argc==3?argv[2]:L"";
     LocalFree(argv);
     if(argc!=1 && (argc!=3 || (operation!=L"/ordinary" && operation!=L"/open") ||
-        (tab!=L"connection" && tab!=L"settings" && tab!=L"mesh")))return ERROR_INVALID_PARAMETER;
+        (tab!=L"connection" && tab!=L"settings" && tab!=L"mesh" && tab!=L"zapret")))return ERROR_INVALID_PARAMETER;
     if(operation==L"/ordinary" && IsUserAnAdmin()){
         if(FAILED(open_user_window(module,tab.c_str()))){
             MessageBoxW(nullptr,L"Откройте FLURUX через «Пуск» в обычном сеансе Windows.",L"FLURUX",MB_ICONINFORMATION);

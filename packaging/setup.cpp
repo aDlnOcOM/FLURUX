@@ -116,8 +116,8 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
         if(installed){
             unsigned major=0,minor=0,patch=0;
             choice.newer=swscanf_s(version,L"%u.%u.%u",&major,&minor,&patch)!=3 ||
-                         major>0 || minor>3 || (minor==3 && patch>4);
-            choice.older=!choice.newer && choice.version!=L"0.3.4";
+                         major>0 || minor>3 || (minor==3 && patch>5);
+            choice.older=!choice.newer && choice.version!=L"0.3.5";
         }
         auto action=DialogBoxParamW(GetModuleHandleW(nullptr),
             MAKEINTRESOURCEW(installed?IDD_MAINTAIN:IDD_INSTALL),nullptr,setup_dialog,
@@ -134,7 +134,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
                 return rc;
             }
             if(rc==ERROR_INSTALL_USEREXIT)return rc;
-            if(choice.version!=L"0.3.4" || (rc!=ERROR_INSTALL_SOURCE_ABSENT && rc!=ERROR_BAD_CONFIGURATION)){
+            if(choice.version!=L"0.3.5" || (rc!=ERROR_INSTALL_SOURCE_ABSENT && rc!=ERROR_BAD_CONFIGURATION)){
                 auto message=L"Не удалось удалить FLURUX. Код Windows Installer: "+std::to_wstring(rc);
                 MessageBoxW(nullptr,message.c_str(),L"FLURUX",MB_ICONERROR);return rc;
             }

@@ -195,11 +195,13 @@ def guard_path() -> Path:
     """Locate and verify the installed privileged broker immediately before UAC."""
     exe = program_files() / "FLURUX" / "Security" / "FluruxGuard.exe"
     if not exe.is_file():
-        raise ValueError("Установите FLURUX-Security-x64.msi из архива приложения.")
+        raise ValueError(
+            "Установите FLURUX из Setup-x64.exe или откройте установщик и нажмите «Восстановить»."
+        )
     protected_path(exe)
     if digest(exe) != GUARD_HASH:
         raise ValueError(
-            "Версия помощника не совпадает с приложением. Переустановите MSI из этого выпуска."
+            "Версия помощника не совпадает с приложением. Обновите или восстановите FLURUX через установщик этого выпуска."
         )
     return exe
 

@@ -4,6 +4,7 @@ import threading
 import tkinter as tk
 import webbrowser
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -26,7 +27,9 @@ from route_manager.config import (
     socks_port,
     validated_url,
     webtunnel_domains,
+    zapret_options,
 )
+from route_manager.diagnostics_gui import DiagnosticsPanel
 from route_manager.help_gui import HelpPanel
 from route_manager.private_files import private_directory
 from route_manager.runtime import Session, Update, check_route
@@ -45,8 +48,9 @@ from route_manager.theme import (
     text_navigation,
 )
 from route_manager.tor_bundle import install_bundle, installed_tor
+from route_manager.zapret_gui import ZapretPanel
+from route_manager.zapret_presets import FAMILIES
 
-ZAPRET_LINK = "https://github.com/bol-van/zapret-win-bundle"
 TOR_LINK = "https://www.torproject.org/download/tor/"
 BRIDGE_LINK = "https://support.torproject.org/ru/tor-browser/circumvention/getting-bridges/"
 MODE_HELP = {
@@ -98,6 +102,8 @@ class App:
         self.check_running = False
         self.check_stop = threading.Event()
         self.closing = False
+        self.restart_zapret: Settings | None = None
+        self.running_settings: Settings | None = None
         self.log_count = 0
         self.status: dict[str, ttk.Label] = {}
         self.ready_engines: set[str] = set()
@@ -156,19 +162,28 @@ class App:
         connection_controls = ttk.Frame(connection)
         settings_controls = ttk.Frame(settings)
         self._connection(connection_controls)
-        self._settings(settings_controls, saved.domains)
+        self._settings(settings_controls)
         if not admin:
             connection_controls.pack(fill="both", expand=True)
             settings_controls.pack(fill="both", expand=True)
         self._journal(journal)
+        self.journal_page = journal
         self.advanced = AdvancedPanel(tabs, data, admin=admin)
+        zapret_page = ttk.Frame(tabs)
+        tabs.add(zapret_page, text="zapret2")
+        self.zapret = ZapretPanel(zapret_page, self, saved)
+        self.domains = self.zapret.domains
+        if not admin:
+            self.zapret.pack(fill="both", expand=True)
         self.user_tabs = {
             "connection": connection,
+            "zapret": zapret_page,
             "settings": settings,
             "mesh": self.advanced.mesh_page,
         }
         tabs.insert(1, self.advanced.page)
         tabs.insert(2, self.advanced.mesh_page)
+        tabs.insert(1, zapret_page)
         tabs.enable_traversal()
         if admin:
             for name, page in self.user_tabs.items():
@@ -183,6 +198,7 @@ class App:
                     command=partial(self.open_user_tab, name),
                 ).pack(anchor="w", padx=14)
             tabs.select(self.advanced.page)  # type: ignore[no-untyped-call]
+        self.diagnostics = DiagnosticsPanel(tabs, self)
         self.help = HelpPanel(tabs)
 
         def context_help(event: object = None) -> str:
@@ -190,8 +206,10 @@ class App:
             current = select_key(MODES, self.mode.get())
             key = {
                 "Каскады": self.advanced.current["kind"],
+                "zapret2": "zapret",
                 "Mesh": "mesh",
                 "Настройки": "settings",
+                "Тесты": "diagnostics",
                 "Журнал": "journal",
                 "Подключение": current if current in ("tor", "zapret") else "both",
             }.get(where, "home")
@@ -204,6 +222,11 @@ class App:
             text="Справка · F1",
             command=lambda: self.help.show(self.advanced.current["kind"]),
         ).grid(row=0, column=1, sticky="e", padx=(6, 0))
+        ttk.Button(
+            self.advanced.footer,
+            text="Тест профиля",
+            command=lambda: self.diagnostics.open("profile"),
+        ).grid(row=0, column=2, sticky="e", padx=4)
         self.accessibility = AccessibleControls(root)
         self._mode_changed()
         self._transport_changed()
@@ -309,6 +332,8 @@ class App:
         self.stop_button = ttk.Button(actions, text="Остановить", command=self.stop)
         self.stop_button.pack(side="left")
         proxy = ttk.Frame(profile, style="Card.TFrame")
+        self.tor_clients = proxy
+        self.zapret_link = ttk.Button(profile, text="Управление zapret2", command=self.show_zapret)
         proxy.pack(fill="x", side="bottom", pady=(7, 0))
         ttk.Separator(proxy).pack(fill="x", pady=(0, 6))
         ttk.Label(proxy, text="Клиенты Tor", style="CardMuted.TLabel").pack(anchor="w", pady=(0, 3))
@@ -349,29 +374,20 @@ class App:
         result.pack(anchor="w", fill="x")
         result.bind("<Configure>", lambda e: result.configure(wraplength=max(120, e.width - 4)))
 
-    def _settings(self, parent: ttk.Frame, domains: str) -> None:
+    def _settings(self, parent: ttk.Frame) -> None:
         parent.columnconfigure((0, 1), weight=1, uniform="settings")
         parent.rowconfigure(0, weight=1)
         zapret = self._card(parent, "zapret2", padding=(0, 0, 7, 0))
         tor = self._card(parent, "Tor", column=1, padding=(7, 0, 0, 0))
-        self._caption(zapret, "Системный движок")
         ttk.Label(
             zapret,
-            text="Помощник FLURUX входит в установщик. Добавьте проверенный комплект zapret2 по инструкции в справке.",
+            text="Установка движка, стратегия, сайты и порты доступны на вкладке zapret2. Эти параметры также используются в комбинированных маршрутах.",
+            wraplength=274,
             style="CardMuted.TLabel",
-            wraplength=270,
-        ).pack(anchor="w")
-        self._caption(zapret, "Стратегия")
-        self._choice(zapret, self.strategy, STRATEGIES).pack(fill="x")
-        self._caption(zapret, "Домены для zapret2")
-        self.domains = named(self._text(zapret, 4), "Домены для zapret2")
-        self.domains.insert("1.0", domains)
-        ttk.Label(
-            zapret,
-            text="По одному на строку. В каскаде адреса мостов добавляются автоматически.",
-            style="CardMuted.TLabel",
-            wraplength=275,
-        ).pack(anchor="w", pady=(6, 9))
+        ).pack(anchor="w", pady=8)
+        ttk.Button(zapret, text="Управление zapret2", command=self.show_zapret).pack(
+            anchor="w", pady=(0, 9)
+        )
         ttk.Button(
             zapret, text="Сохранить настройки", style="Primary.TButton", command=self.save
         ).pack(anchor="w", pady=(5, 0))
@@ -480,7 +496,14 @@ class App:
         return text
 
     def _mode_changed(self, event: "tk.Event[tk.Misc] | None" = None) -> None:
-        self.mode_help.set(MODE_HELP[select_key(MODES, self.mode.get())])
+        mode = select_key(MODES, self.mode.get())
+        self.mode_help.set(MODE_HELP[mode])
+        if mode == "zapret":
+            self.tor_clients.pack_forget()
+            self.zapret_link.pack(side="bottom", anchor="w", pady=(7, 0))
+        else:
+            self.zapret_link.pack_forget()
+            self.tor_clients.pack(fill="x", side="bottom", pady=(7, 0))
 
     def _transport_changed(self, event: "tk.Event[tk.Misc] | None" = None) -> None:
         self.bridge_sets[self.shown_transport] = self.bridges.get("1.0", "end-1c")
@@ -505,6 +528,10 @@ class App:
             winws=self.winws.get().strip(),
             strategy=select_key(STRATEGIES, self.strategy.get()),
             domains=self.domains.get("1.0", "end-1c"),
+            exclude_domains=self.zapret.excluded.get("1.0", "end-1c"),
+            ip_family=select_key(FAMILIES, self.zapret.family.get()),
+            tcp_ports=self.zapret.tcp.get(),
+            udp_ports=self.zapret.udp.get(),
             tor=self.tor.get().strip(),
             transport=self.shown_transport,
             socks_port=self.port.get().strip(),
@@ -530,6 +557,7 @@ class App:
             settings = self._settings_snapshot()
             if settings.mode != "zapret":
                 socks_port(settings.socks_port)
+            zapret_options(settings, require_domains=False)
             save_settings(self.settings_path, settings)
         except (ValueError, OSError) as exc:
             messagebox.showerror("Настройки", str(exc), parent=self.root)
@@ -539,6 +567,61 @@ class App:
             "app",
             "Настройки сохранены. При активном подключении изменения вступят в силу после перезапуска маршрута.",
         )
+
+    def show_zapret(self) -> None:
+        """Open the standalone workspace without interrupting any active session."""
+        self.help.tabs.select(self.user_tabs["zapret"])  # type: ignore[no-untyped-call]
+
+    def save_zapret(self) -> None:
+        """Persist just the zapret2 fields, independently of unsaved Tor settings."""
+        try:
+            draft = self._settings_snapshot()
+            zapret_options(draft, require_domains=False)
+            old = load_settings(self.settings_path)
+            save_settings(
+                self.settings_path,
+                replace(
+                    old,
+                    strategy=draft.strategy,
+                    domains=draft.domains,
+                    exclude_domains=draft.exclude_domains,
+                    ip_family=draft.ip_family,
+                    tcp_ports=draft.tcp_ports,
+                    udp_ports=draft.udp_ports,
+                ),
+            )
+            self.zapret.notice.set(
+                "Настройки сохранены."
+                + (
+                    " Нажмите «Перезапустить», чтобы применить их."
+                    if "zapret" in self.pending
+                    else ""
+                )
+            )
+        except (OSError, ValueError) as exc:
+            self.zapret.notice.set(str(exc))
+
+    def start_zapret(self) -> None:
+        """Start only winws2, or apply validated settings after the current worker has exited."""
+        if self.admin or self.closing or self.downloading or self.zapret.busy:
+            return
+        if self.advanced.busy:
+            self.zapret.notice.set("Сначала завершите операцию на вкладке «Каскады».")
+            return
+        if self.pending and self.expected_engines != {"zapret"}:
+            return
+        try:
+            draft = replace(self._settings_snapshot(), mode="zapret")
+            prepare_zapret(draft)
+        except (OSError, ValueError) as exc:
+            self.zapret.notice.set(str(exc))
+            return
+        if self.pending:
+            self.stop()
+            self.restart_zapret = draft
+            self.zapret.notice.set("Останавливаем предыдущий сеанс перед перезапуском…")
+        else:
+            self.start(draft)
 
     def _get_tor(self) -> None:
         if not messagebox.askokcancel(
@@ -566,12 +649,21 @@ class App:
 
         threading.Thread(target=download, daemon=True).start()
 
-    def start(self) -> None:
+    def start(self, prepared: Settings | None = None) -> None:
         """Validate and launch the chosen session."""
-        if self.admin or self.closing or self.pending or self.downloading:
+        if (
+            self.admin
+            or self.closing
+            or self.pending
+            or self.downloading
+            or self.zapret.busy
+            or self.diagnostics.busy
+        ):
             return
         try:
-            settings = self._settings_snapshot()
+            settings = prepared or self._settings_snapshot()
+            if settings.mode == "zapret" and self.advanced.busy:
+                raise ValueError("Сначала завершите операцию на вкладке «Каскады».")
             if settings.mode != "zapret":
                 socks_port(settings.socks_port)
             if settings.mode != "zapret" and not settings.tor:
@@ -583,8 +675,18 @@ class App:
             zapret = prepare_zapret(settings, bridge_domains) if settings.mode != "tor" else None
             save_settings(self.settings_path, settings)
         except (OSError, ValueError) as exc:
-            messagebox.showerror("Проверьте настройки", str(exc), parent=self.root)
+            if prepared is not None or self.mode.get() == MODES["zapret"]:
+                self.show_zapret()
+                if not self.zapret.present:
+                    self.zapret.show_engine()
+                self.zapret.notice.set(str(exc))
+            else:
+                messagebox.showerror("Проверьте настройки", str(exc), parent=self.root)
             return
+        self.mode.set(MODES[settings.mode])
+        self._mode_changed()
+        if settings.mode == "zapret":
+            self.zapret.notice.set("Подтвердите запуск в окне Windows.")
         self.tor_ready = False
         self.tor_port = tor.port if tor else None
         self.pending = {name for name, enabled in (("zapret", zapret), ("tor", tor)) if enabled}
@@ -596,12 +698,16 @@ class App:
                 style="EngineState.TLabel",
             )
         self._log("app", f"Выбран режим {MODES[settings.mode]}.")
+        self.running_settings = settings
         self.session = Session(self.data, self.entry, self.events)
         self.session.start(zapret, tor, cascade)
         self._refresh_controls()
 
     def stop(self) -> None:
         """Request the stop of both managed engines."""
+        self.restart_zapret = None
+        if self.diagnostics.uses_active:
+            self.diagnostics.cancel.set()
         if self.downloading:
             self.download_stop.set()
             self.status["tor"].configure(text="Отмена загрузки…")
@@ -612,7 +718,13 @@ class App:
 
     def check(self, via_tor: bool, *, identity: bool = False) -> None:
         """Probe a URL or verify that the public endpoint sees a Tor exit."""
-        if self.admin or self.closing or self.check_running or (via_tor and not self.tor_ready):
+        if (
+            self.admin
+            or self.closing
+            or self.check_running
+            or self.diagnostics.busy
+            or (via_tor and not self.tor_ready)
+        ):
             return
         try:
             url = TOR_CHECK if identity else validated_url(self.target.get())
@@ -686,6 +798,7 @@ class App:
             messagebox.showerror("Microsoft Edge", str(exc), parent=self.root)
 
     def _refresh_controls(self) -> None:
+        self.zapret.controls()
         active = bool(self.pending) or self.downloading
         stopping = (
             self.download_stop.is_set()
@@ -706,12 +819,18 @@ class App:
             summary = "Отключено"
         if self.overview.get() != summary:
             self.overview.set(summary)
-        self.start_button.configure(state="disabled" if active or self.closing else "normal")
+        self.start_button.configure(
+            state="disabled"
+            if active or self.closing or self.zapret.busy or self.diagnostics.busy
+            else "normal"
+        )
         self.stop_button.configure(state="normal" if active and not stopping else "disabled")
         self.mode_box.configure(state="disabled" if active else "readonly")
         for button in (self.copy_button, self.edge_button):
             button.configure(state="normal" if self.tor_ready else "disabled")
-        self.direct_check.configure(state="disabled" if self.check_running else "normal")
+        self.direct_check.configure(
+            state="disabled" if self.check_running or self.diagnostics.busy else "normal"
+        )
         for button in (self.tor_check, self.ip_check):
             button.configure(
                 state="normal" if self.tor_ready and not self.check_running else "disabled"
@@ -724,7 +843,9 @@ class App:
                 event = self.events.get_nowait()
             except Empty:
                 break
-            if event.kind == "progress":
+            if event.kind.startswith("component-"):
+                self.zapret.update_job(event)
+            elif event.kind == "progress":
                 if not self.download_stop.is_set():
                     self.status["tor"].configure(text=event.message)
             elif event.kind in ("downloaded", "download-error"):
@@ -746,6 +867,10 @@ class App:
                 if event.message.startswith("Ошибка"):
                     style = "CardError.TLabel"
                 self.status[event.engine].configure(text=event.message, style=style)
+                if event.engine == "zapret" and event.ready:
+                    self.zapret.notice.set(
+                        "Движок запущен. Проверьте доступ к одному из сайтов списка."
+                    )
                 if event.engine == "tor":
                     self.tor_ready = (
                         event.ready and self.session is not None and not self.session.stop.is_set()
@@ -753,7 +878,11 @@ class App:
                 self._refresh_controls()
             elif event.kind == "log":
                 self._log(event.engine, event.message)
+                if event.engine == "zapret":
+                    self.zapret.notice.set(event.message)
             elif event.kind == "done":
+                if self.diagnostics.uses_active:
+                    self.diagnostics.cancel.set()
                 self.pending.discard(event.engine)
                 self._refresh_controls()
             elif event.kind == "check":
@@ -761,8 +890,14 @@ class App:
                 self.probe_result.set(event.message)
                 self._log(event.engine, event.message)
                 self._refresh_controls()
+        self.diagnostics.poll()
+        if not self.closing and not self.pending and self.restart_zapret is not None:
+            draft, self.restart_zapret = self.restart_zapret, None
+            self.start(draft)
         if (
             self.closing
+            and not self.zapret.busy
+            and not self.diagnostics.busy
             and not self.pending
             and not self.downloading
             and not self.check_running
@@ -805,6 +940,8 @@ class App:
             return
         self.closing = True
         self.check_stop.set()
+        self.zapret.cancel.set()
+        self.diagnostics.cancel.set()
         self.advanced.closing = True
         self.advanced.stop_event.set()
         self.stop()

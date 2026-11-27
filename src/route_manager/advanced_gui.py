@@ -59,6 +59,8 @@ class AdvancedPanel:
             self.read_error = "Хранилище профилей недоступно. " + str(error)
         self.queue: SimpleQueue[tuple[str, object]] = SimpleQueue()
         self.mesh_busy = False
+        self.diagnosing = False
+        self.active_profile: Obj | None = None
         self.available_exits: set[str] = set()
         self.busy = False
         self.closing = False
@@ -414,7 +416,7 @@ class AdvancedPanel:
 
     def save(self) -> None:
         """Save the current profile for this Windows user."""
-        if self.busy or self.closing:
+        if self.busy or self.closing or self.diagnosing:
             return
         try:
             p = self.collect()
@@ -464,7 +466,12 @@ class AdvancedPanel:
 
     def task(self, fn: Callable[[], None], *, mesh: bool = False, stoppable: bool = False) -> None:
         """Run one network operation outside the Tk thread."""
-        if (mesh and self.admin) or (self.mesh_busy if mesh else self.busy) or self.closing:
+        if (
+            self.diagnosing
+            or (mesh and self.admin)
+            or (self.mesh_busy if mesh else self.busy)
+            or self.closing
+        ):
             return
         if mesh:
             self.mesh_busy = True
@@ -488,7 +495,7 @@ class AdvancedPanel:
 
     def unlock(self) -> None:
         """Release a persistent FLURUX lock, including when the tunnel is offline."""
-        if self.busy or self.closing:
+        if self.busy or self.closing or self.diagnosing:
             self.status.set("Остановите активный маршрут перед снятием блокировки.")
             return
 
@@ -500,7 +507,7 @@ class AdvancedPanel:
 
     def install(self) -> None:
         """Provision only nodes named in the current profile."""
-        if self.busy or self.closing:
+        if self.busy or self.closing or self.diagnosing:
             return
         try:
             p = self.collect()
@@ -536,7 +543,7 @@ class AdvancedPanel:
 
     def start(self) -> None:
         """Start the selected route or select a mesh exit."""
-        if self.busy or self.closing:
+        if self.busy or self.closing or self.diagnosing:
             return
         try:
             p = self.collect()
@@ -568,7 +575,13 @@ class AdvancedPanel:
             elif p["kind"] == "mesh_relay":
                 self.notify(self.mesh_ping(p["nodes"][0]["host"], p["engine_path"]))
             else:
-                start_route(p, self.stop_event, self.notify, self.cache)
+                start_route(
+                    p,
+                    self.stop_event,
+                    self.notify,
+                    self.cache,
+                    ready=lambda: self.queue.put(("route-ready", copy.deepcopy(p))),
+                )
                 self.notify("Маршрут остановлен.")
 
         self.status.set("Подключение…")
@@ -648,7 +661,10 @@ class AdvancedPanel:
             if kind == "mesh_done":
                 self.mesh_busy = False
                 self._mesh_controls()
+            elif kind == "route-ready" and isinstance(value, dict):
+                self.active_profile = value
             elif kind == "done":
+                self.active_profile = None
                 self.busy = False
                 self.stop_button.state(["disabled"])
                 self._editing_controls()

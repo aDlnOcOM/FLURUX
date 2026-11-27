@@ -93,9 +93,14 @@ class Session:
             self.emit(engine, "status", "Остановлен")
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             message = str(exc)
+            status = "Ошибка запуска или работы"
+            if self.stop.is_set():
+                self.emit(engine, "status", "Остановлен")
+                return
             if getattr(exc, "winerror", None) == 1223:
                 message = "Запуск zapret2 отменён в окне UAC."
-            self.emit(engine, "status", "Ошибка запуска или работы")
+                status = "Запуск отменён"
+            self.emit(engine, "status", status)
             self.emit(engine, "log", message)
         finally:
             if engine == "zapret":
@@ -105,7 +110,16 @@ class Session:
     def _zapret(self, config: ZapretConfig) -> None:
         self.emit("zapret", "status", "Ожидание Windows UAC")
         with guard_session(
-            "zapret", [config.strategy, ",".join(config.domains)], self.stop
+            "zapret",
+            [
+                config.strategy,
+                ",".join(config.domains),
+                ",".join(config.excluded) or "-",
+                config.tcp_ports,
+                config.udp_ports,
+                config.ip_family,
+            ],
+            self.stop,
         ) as worker:
             self.zapret_ready.set()
             self.emit("zapret", "status", "Работает", ready=True)

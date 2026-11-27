@@ -232,7 +232,11 @@ def managed_process(
 
 def system_curl() -> Path:
     """Locate the curl executable supplied with Windows."""
-    path = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "curl.exe"
+    buffer = ct.create_unicode_buffer(32768)
+    length = KERNEL.GetSystemDirectoryW(buffer, len(buffer))
+    if not 0 < length < len(buffer):
+        raise ct.WinError(ct.get_last_error())
+    path = Path(buffer.value) / "curl.exe"
     if not path.is_file():
         raise FileNotFoundError("Не найден системный curl.exe в System32.")
     return path

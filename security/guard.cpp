@@ -113,6 +113,7 @@ bool domains_ok(const wstring& csv){
     }
     return true;
 }
+#include "engine_setup.h"
 struct Signals{
     Handle parent,stop,ready;
     Signals(const wstring& pid,const wstring& nonce){
@@ -126,16 +127,24 @@ struct Signals{
         require(parent.h && stop.h && ready.h,ERROR_INVALID_HANDLE);
     }
 };
-int zapret(const fs::path& dir,Signals& signals,const wstring& strategy,const wstring& domains){
-    require(domains_ok(domains) && (strategy==L"split" || strategy==L"disorder" || strategy==L"quic"));
+int zapret(const fs::path& dir,Signals& signals,const wstring& strategy,const wstring& domains,
+           const wstring& excluded,const wstring& tcp,const wstring& udp,const wstring& family){
+    require(domains_ok(domains) && (strategy==L"split" || strategy==L"disorder" || strategy==L"quic" || strategy==L"disorder_quic"));
+    require(family==L"both" || family==L"ipv4" || family==L"ipv6");
+    bool quic=strategy==L"quic" || strategy==L"disorder_quic";
+    require(valid_ports(tcp) && valid_ports(udp) && (excluded==L"-" || domains_ok(excluded)) && domains.size()+excluded.size()<=12001);
+    Handle lock(engine_lock(dir.parent_path()));
+    recover_engine(dir.parent_path());
     verify_engine(dir,true);
     auto exe=dir/L"winws2.exe";
     auto hosts=L" --hostlist-domains="+domains;
-    wstring line=L"\""+exe.wstring()+L"\" --wf-tcp-out=443 --lua-init=@lua/zapret-lib.lua --lua-init=@lua/zapret-antidpi.lua";
-    if(strategy==L"quic")line+=L" --wf-udp-out=443 --blob=quic:@files/quic_initial_www_google_com.bin";
-    line+=L" --filter-tcp=443 --filter-l7=tls"+hosts+L" --out-range=-d10 --payload=tls_client_hello --lua-desync=";
-    line+=(strategy==L"disorder"?L"multidisorder":L"multisplit");line+=L":pos=1,midsld";
-    if(strategy==L"quic")line+=L" --new --filter-udp=443 --filter-l7=quic"+hosts+L" --out-range=-d10 --payload=quic_initial --lua-desync=fake:blob=quic:repeats=6";
+    if(excluded!=L"-")hosts+=L" --hostlist-exclude-domains="+excluded;
+    wstring line=L"\""+exe.wstring()+L"\" --wf-tcp-out="+tcp+L" --lua-init=@lua/zapret-lib.lua --lua-init=@lua/zapret-antidpi.lua";
+    if(family!=L"both")line+=L" --wf-l3="+family;
+    if(quic)line+=L" --wf-udp-out="+udp+L" --blob=quic:@files/quic_initial_www_google_com.bin";
+    line+=L" --filter-tcp="+tcp+L" --filter-l7=tls"+hosts+L" --out-range=-d10 --payload=tls_client_hello --lua-desync=";
+    line+=((strategy==L"disorder" || strategy==L"disorder_quic")?L"multidisorder":L"multisplit");line+=L":pos=1,midsld";
+    if(quic)line+=L" --new --filter-udp="+udp+L" --filter-l7=quic"+hosts+L" --out-range=-d10 --payload=quic_initial --lua-desync=fake:blob=quic:repeats=6";
     wchar_t win[MAX_PATH]{};require(GetWindowsDirectoryW(win,MAX_PATH)>0);
     // No user-controlled PATH, Lua paths, HOME or CYGWIN settings in the elevated engine.
     wstring env=L"PATH="+wstring(win)+L"\\System32";env.push_back(0);
@@ -158,6 +167,7 @@ int zapret(const fs::path& dir,Signals& signals,const wstring& strategy,const ws
     if(wait==WAIT_OBJECT_0+2){DWORD rc=0;GetExitCodeProcess(process.h,&rc);return rc?rc:1;}
     require(wait==WAIT_OBJECT_0 || wait==WAIT_OBJECT_0+1);return 0;
 }
+#include "benchmark.h"
 #include "network_lock.h"
 int wmain(int argc,wchar_t** argv){
     try{
@@ -168,10 +178,14 @@ int wmain(int argc,wchar_t** argv){
         if(argc==3 && wstring(argv[1])==L"verify-files"){verify_engine(fs::absolute(argv[2]),false);return 0;}
         auto dir=installed();installed_paths(dir);
         if(argc==2 && wstring(argv[1])==L"unlock"){unlock_network();return 0;}
+        if(argc==3 && wstring(argv[1])==L"install-engine"){manage_engine(dir,argv[2],false);return 0;}
+        if(argc==2 && wstring(argv[1])==L"remove-engine"){manage_engine(dir,L"",true);return 0;}
         require(argc>=4);Signals signals(argv[2],argv[3]);
-        if(argc==6 && wstring(argv[1])==L"zapret")return zapret(dir/L"engine",signals,argv[4],argv[5]);
+        if(argc==6 && wstring(argv[1])==L"benchmark")return benchmark(dir/L"engine",signals,argv[3],argv[4],argv[5]);
+        if(argc==10 && wstring(argv[1])==L"zapret")return zapret(dir/L"engine",signals,argv[4],argv[5],argv[6],argv[7],argv[8],argv[9]);
         if(argc==8 && wstring(argv[1])==L"lock"){network_lock(signals,argv[4],argv[5],argv[6],argv[7]);return 0;}
         return ERROR_INVALID_PARAMETER;
-    }catch(DWORD rc){return static_cast<int>(rc?rc:ERROR_INVALID_DATA);}
+    }catch(const fs::filesystem_error& e){return e.code().value()?e.code().value():ERROR_INVALID_DATA;}
+    catch(DWORD rc){return static_cast<int>(rc?rc:ERROR_INVALID_DATA);}
     catch(...){return ERROR_INVALID_DATA;}
 }

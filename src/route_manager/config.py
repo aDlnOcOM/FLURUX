@@ -8,14 +8,15 @@ from urllib.parse import urlsplit
 
 from route_manager.profiles import protect
 from route_manager.security import program_files, verify_external
+from route_manager.zapret_presets import FAMILIES, METHODS, QUIC_METHODS
 
 MODES = {
-    "zapret": "zapret2",
+    "zapret": "Только zapret2",
     "tor": "Tor",
     "both": "zapret2 + Tor",
     "cascade": "WebTunnel через zapret2",
 }
-STRATEGIES = {"split": "Разделение TLS", "disorder": "Перестановка TLS", "quic": "TLS + QUIC"}
+STRATEGIES = METHODS
 TRANSPORTS = {
     "webtunnel": "WebTunnel",
     "obfs4": "obfs4",
@@ -34,6 +35,10 @@ class Settings:
     winws: str = ""
     strategy: str = "split"
     domains: str = ""
+    exclude_domains: str = ""
+    tcp_ports: str = "443"
+    udp_ports: str = "443"
+    ip_family: str = "both"
     tor: str = ""
     transport: str = "direct"
     webtunnel_bridges: str = ""
@@ -61,6 +66,11 @@ class ZapretConfig:
     exe: Path
     strategy: str
     domains: tuple[str, ...]
+
+    excluded: tuple[str, ...] = ()
+    tcp_ports: str = "443"
+    udp_ports: str = "443"
+    ip_family: str = "both"
 
 
 def load_settings(path: Path) -> Settings:
@@ -231,18 +241,53 @@ def webtunnel_domains(config: TorConfig) -> tuple[str, ...]:
     return tuple(dict.fromkeys(domains))
 
 
+def port_list(value: str) -> str:
+    """Validate and normalize up to sixteen destination ports."""
+    items = re.split(r"[\s,;]+", value.strip())
+    if not all(
+        p.isascii() and p.isdecimal() and len(p) <= 5 and 1 <= int(p) <= 65535 for p in items
+    ):
+        raise ValueError("Введите порты от 1 до 65535 через запятую.")
+    ports = list(dict.fromkeys(str(int(p)) for p in items))
+    if len(ports) > 16:
+        raise ValueError("Можно задать до 16 портов для каждого протокола.")
+    return ",".join(ports)
+
+
+def zapret_options(
+    settings: Settings, bridges: tuple[str, ...] = (), *, require_domains: bool = True
+) -> tuple[tuple[str, ...], tuple[str, ...], str, str]:
+    """Validate scope, exclusions and ports before starting the worker."""
+    if settings.ip_family not in FAMILIES:
+        raise ValueError("Выберите IPv4, IPv6 или оба семейства.")
+    if settings.strategy not in STRATEGIES:
+        raise ValueError("Выберите стратегию zapret2.")
+    domains = tuple(dict.fromkeys((*parse_domains(settings.domains), *bridges)))
+    excluded = parse_domains(settings.exclude_domains)
+    if len(",".join(domains)) + len(",".join(excluded)) > 12000:
+        raise ValueError("Оба списка вместе могут содержать до 12 000 символов.")
+    if not domains and require_domains:
+        raise ValueError("Добавьте хотя бы один сайт в список доменов.")
+    tcp = port_list(settings.tcp_ports)
+    udp = port_list(settings.udp_ports) if settings.strategy in QUIC_METHODS else "443"
+    if bridges and (
+        "443" not in tcp.split(",")
+        or any(b == e or b.endswith("." + e) for b in bridges for e in excluded)
+    ):
+        raise ValueError(
+            "Для WebTunnel включите TCP-порт 443 и уберите домены мостов из исключений."
+        )
+    if domains and all(any(d == e or d.endswith("." + e) for e in excluded) for d in domains):
+        raise ValueError("Исключения охватывают все выбранные сайты.")
+    return domains, excluded, tcp, udp
+
+
 def prepare_zapret(settings: Settings, bridge_domains: tuple[str, ...] = ()) -> ZapretConfig:
     """Validate the selected winws2 bundle and the list of destinations."""
     exe = program_files() / "FLURUX" / "Security" / "engine" / "winws2.exe"
     if not exe.is_file():
-        raise ValueError("Установите FLURUX-Security-x64.msi из архива приложения.")
-    if settings.strategy not in STRATEGIES:
-        raise ValueError("Выберите стратегию zapret2.")
-    domains = tuple(dict.fromkeys((*parse_domains(settings.domains), *bridge_domains)))
-    if len(",".join(domains)) > 12000:
-        raise ValueError("Суммарная длина списка доменов ограничена 12000 символами.")
-    if not domains:
-        raise ValueError("Добавьте домены для zapret2 в настройках.")
+        raise ValueError("Откройте вкладку «zapret2» и нажмите «Установить движок».")
+    domains, excluded, tcp, udp = zapret_options(settings, bridge_domains)
     required = [
         "lua/zapret-lib.lua",
         "lua/zapret-antidpi.lua",
@@ -250,12 +295,12 @@ def prepare_zapret(settings: Settings, bridge_domains: tuple[str, ...] = ()) -> 
         "WinDivert64.sys",
         "cygwin1.dll",
     ]
-    if settings.strategy == "quic":
+    if settings.strategy in QUIC_METHODS:
         required.append("files/quic_initial_www_google_com.bin")
     missing = [item for item in required if not (exe.parent / item).is_file()]
     if missing:
         raise ValueError("Распакуйте сборку zapret целиком. Не найдены: " + ", ".join(missing))
-    return ZapretConfig(exe, settings.strategy, domains)
+    return ZapretConfig(exe, settings.strategy, domains, excluded, tcp, udp, settings.ip_family)
 
 
 def validated_url(raw: str) -> str:
@@ -275,32 +320,43 @@ def validated_url(raw: str) -> str:
 def zapret_args(config: ZapretConfig, hostlist: Path) -> list[str]:
     """Build winws2 arguments using the official Lua strategies."""
     hosts = f"--hostlist={hostlist}"
-    method = "multidisorder" if config.strategy == "disorder" else "multisplit"
+    exceptions = (
+        ["--hostlist-exclude-domains=" + ",".join(config.excluded)] if config.excluded else []
+    )
+    method = "multidisorder" if config.strategy in ("disorder", "disorder_quic") else "multisplit"
     args = [
         str(config.exe),
-        "--wf-tcp-out=443",
+        *([] if config.ip_family == "both" else ["--wf-l3=" + config.ip_family]),
+        f"--wf-tcp-out={config.tcp_ports}",
         "--lua-init=@lua/zapret-lib.lua",
         "--lua-init=@lua/zapret-antidpi.lua",
     ]
-    if config.strategy == "quic":
-        args.extend(("--wf-udp-out=443", "--blob=quic:@files/quic_initial_www_google_com.bin"))
+    if config.strategy in QUIC_METHODS:
+        args.extend(
+            (
+                f"--wf-udp-out={config.udp_ports}",
+                "--blob=quic:@files/quic_initial_www_google_com.bin",
+            )
+        )
     args.extend(
         (
-            "--filter-tcp=443",
+            f"--filter-tcp={config.tcp_ports}",
             "--filter-l7=tls",
             hosts,
+            *exceptions,
             "--out-range=-d10",
             "--payload=tls_client_hello",
             f"--lua-desync={method}:pos=1,midsld",
         )
     )
-    if config.strategy == "quic":
+    if config.strategy in QUIC_METHODS:
         args.extend(
             (
                 "--new",
-                "--filter-udp=443",
+                f"--filter-udp={config.udp_ports}",
                 "--filter-l7=quic",
                 hosts,
+                *exceptions,
                 "--out-range=-d10",
                 "--payload=quic_initial",
                 "--lua-desync=fake:blob=quic:repeats=6",
